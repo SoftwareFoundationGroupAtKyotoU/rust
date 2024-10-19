@@ -87,6 +87,7 @@ mod machine;
 mod mono_hash_map;
 mod operator;
 mod provenance_gc;
+mod rc;
 mod range_map;
 mod shims;
 

@@ -138,7 +138,10 @@ pub struct LocalState<'tcx, Prov: Provenance = CtfeProvenance> {
     value: LocalValue<Prov>,
     /// Don't modify if `Some`, this is only used to prevent computing the layout twice.
     /// Avoids computing the layout of locals that are never actually initialized.
-    layout: Cell<Option<TyAndLayout<'tcx>>>,
+    // TODO(south): access this information using another method and make this private again
+    // This does not store the type of the local; the type is given by `body.local_decls` and can never
+    // change, so by not storing here we avoid having to maintain that as an invariant.
+    pub layout: Cell<Option<TyAndLayout<'tcx>>>,
 }
 
 impl<Prov: Provenance> std::fmt::Debug for LocalState<'_, Prov> {

@@ -1075,10 +1075,13 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         // Call the lang item.
         let panic = ecx.tcx.lang_items().get(reason.lang_item()).unwrap();
         let panic = ty::Instance::mono(ecx.tcx.tcx, panic);
-        ecx.call_function(panic, Abi::Rust, &[], None, StackPopCleanup::Goto {
-            ret: None,
-            unwind: mir::UnwindAction::Unreachable,
-        })?;
+        ecx.call_function(
+            panic,
+            Abi::Rust,
+            &[],
+            None,
+            StackPopCleanup::Goto { ret: None, unwind: mir::UnwindAction::Unreachable },
+        )?;
         interp_ok(())
     }
 
@@ -1156,6 +1159,8 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         size: Size,
         align: Align,
     ) -> InterpResult<'tcx, Self::AllocExtra> {
+        info!("init_alloc_extra(id = {id:?}, kind = {kind:?}, size = {size:?}, align = {align:?})");
+
         if ecx.machine.tracked_alloc_ids.contains(&id) {
             ecx.emit_diagnostic(NonHaltingDiagnostic::CreatedAlloc(id, size, align, kind));
         }
@@ -1507,6 +1512,8 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
 
     #[inline(always)]
     fn after_stack_push(ecx: &mut InterpCx<'tcx, Self>) -> InterpResult<'tcx> {
+        info!("after_stack_push(def = {def:?})", def = ecx.frame().instance().def);
+
         if ecx.frame().extra.is_user_relevant {
             // We just pushed a local frame, so we know that the topmost local frame is the topmost
             // frame. If we push a non-local frame, there's no need to do anything.
@@ -1520,6 +1527,9 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         ecx: &InterpCx<'tcx, Self>,
         frame: &Frame<'tcx, Self::Provenance, Self::FrameExtra>,
     ) -> InterpResult<'tcx> {
+        info!("before_stack_pop(def = {def:?})", def = frame.instance().def);
+        crate::rc::rc_test(ecx);
+
         // We want this *before* the return value copy, because the return place itself is protected
         // until we do `end_call` here.
         if ecx.machine.borrow_tracker.is_some() {
@@ -1538,6 +1548,11 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         frame: Frame<'tcx, Provenance, FrameExtra<'tcx>>,
         unwinding: bool,
     ) -> InterpResult<'tcx, ReturnAction> {
+        info!(
+            "after_stack_pop(def = {def:?}, unwinding = {unwinding:?})",
+            def = frame.instance().def,
+        );
+
         if frame.extra.is_user_relevant {
             // All that we store is whether or not the frame we just removed is local, so now we
             // have no idea where the next topmost local frame is. So we recompute it.

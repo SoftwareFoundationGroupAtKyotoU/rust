@@ -1513,6 +1513,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
     #[inline(always)]
     fn after_stack_push(ecx: &mut InterpCx<'tcx, Self>) -> InterpResult<'tcx> {
         info!("after_stack_push(def = {def:?})", def = ecx.frame().instance().def);
+        crate::rc::rc_test(ecx);
 
         if ecx.frame().extra.is_user_relevant {
             // We just pushed a local frame, so we know that the topmost local frame is the topmost
@@ -1552,6 +1553,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
             "after_stack_pop(def = {def:?}, unwinding = {unwinding:?})",
             def = frame.instance().def,
         );
+        crate::rc::rc_test(ecx);
 
         if frame.extra.is_user_relevant {
             // All that we store is whether or not the frame we just removed is local, so now we

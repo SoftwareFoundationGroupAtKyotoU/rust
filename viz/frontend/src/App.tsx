@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
+import clsx from "clsx";
 import useSWR from "swr";
 
 function readFileToString(file: File): Promise<string> {
@@ -10,13 +11,35 @@ function readFileToString(file: File): Promise<string> {
     });
 }
 
-type Node = {
-    alloc_id?: number;
-    ty: string;
-    offset: number;
-    info_messages: string[];
-    error_messages: string[];
-    children: Node[];
+type VisualizerNodeKey = { alloc_id: number; offset: number; ty: string };
+
+const serializeKey = (key: VisualizerNodeKey): VisualizerNodeKeySerialized =>
+    JSON.stringify([
+        key.alloc_id,
+        key.offset,
+        key.ty,
+    ]) as VisualizerNodeKeySerialized;
+
+type VisualizerNodeValue = {
+    alloc_bytes: number[];
+    messages: { severity: string; message: string }[];
+};
+
+type VisualizerFrame = { nodes: VisualizerNodeKey[] };
+
+type VisualizerData = {
+    nodes: [VisualizerNodeKey, VisualizerNodeValue][];
+    edges: [VisualizerNodeKey, VisualizerNodeKey][];
+    frames: VisualizerFrame[];
+};
+
+type VisualizerNodeKeySerialized = string & { __type: "KEY" };
+
+/** VisualizerData but processed */
+type VisualizerContext = {
+    nodes: Record<VisualizerNodeKeySerialized, VisualizerNodeValue>;
+    edges: Record<VisualizerNodeKeySerialized, VisualizerNodeKey[]>;
+    frames: VisualizerFrame[];
 };
 
 const TextFold: React.FC<{ text: string; maxLength: number }> = ({
@@ -38,53 +61,111 @@ const TextFold: React.FC<{ text: string; maxLength: number }> = ({
     </span>
 );
 
-const Visualizer: React.FC<{ node: Node }> = ({ node }) => {
+type VisualizerProps = {
+    nodeKey: VisualizerNodeKey;
+    context: VisualizerContext;
+    ancestors: VisualizerNodeKeySerialized[];
+};
+
+const Foldable: React.FC<
+    React.PropsWithChildren<{ header: React.ReactNode }>
+> = ({ header, children }) => {
     const [isFolded, setIsFolded] = useState(false);
+
     return (
         <div
             className="leading-[1.2rem]"
             style={{ fontFamily: "Consolas, 'Courier New', monospace" }}
         >
-            <div className="flex gap-2">
+            <div
+                className="cursor-pointer flex gap-2"
+                onClick={() => setIsFolded((f) => !f)}
+            >
                 <div>{isFolded ? "(+)" : "(-)"}</div>
-                <span
-                    className="cursor-pointer"
-                    onClick={() => setIsFolded((isFolded) => !isFolded)}
-                >
-                    <b>alloc_id:</b> {node.alloc_id ?? "none"}, <b>offset: </b>
-                    {node.offset ?? "none"}, <b>ty: </b>{" "}
-                    <TextFold text={node.ty ?? "none"} maxLength={50} />
-                </span>
+                <div>{header}</div>
             </div>
-            {node.info_messages.length > 0 && (
-                <div className="text-blue-600 ml-8 pl-2 border-l border-blue-600">
-                    {node.info_messages.map((message) => (
-                        <p className="my-0">
-                            <TextFold text={message} maxLength={80} />
-                        </p>
-                    ))}
-                </div>
-            )}
-            {node.error_messages.length > 0 && (
-                <div className="text-red-600 ml-8 pl-2 border-l border-red-600">
-                    {node.error_messages.map((message) => (
-                        <p className="my-0">
-                            <TextFold text={message} maxLength={80} />
-                        </p>
-                    ))}
-                </div>
-            )}
             <div
                 className="ml-8"
                 style={{
                     display: isFolded ? "none" : "block",
                 }}
             >
-                {node.children.map((child) => (
-                    <Visualizer node={child} />
-                ))}
+                {children}
             </div>
         </div>
+    );
+};
+
+const Visualizer: React.FC<VisualizerProps> = ({
+    nodeKey,
+    context,
+    ancestors,
+}) => {
+    const nodeKeySerialized = serializeKey(nodeKey);
+    const node = context.nodes[nodeKeySerialized];
+
+    const header = (
+        <>
+            {" "}
+            <b>alloc_id:</b> {nodeKey.alloc_id ?? "none"}, <b>offset: </b>
+            {nodeKey.offset ?? "none"}, <b>ty: </b>{" "}
+            <TextFold text={nodeKey.ty ?? "none"} maxLength={50} />
+        </>
+    );
+
+    if (ancestors.includes(nodeKeySerialized)) {
+        return (
+            <a
+                className="text-green-600 border-green-600"
+                href={`#node_${nodeKeySerialized}`}
+            >
+                (loop) {header}
+            </a>
+        );
+    }
+
+    return (
+        <Foldable header={header}>
+            <a id={`node_${nodeKeySerialized}`}></a>
+            <div>
+                bytes:{" "}
+                <TextFold
+                    text={JSON.stringify(node.alloc_bytes)}
+                    maxLength={80}
+                />
+            </div>
+            {node.messages.length > 0 && (
+                <>
+                    {node.messages.map((message) => (
+                        <div
+                            className={clsx(
+                                "ml-8 pl-2 border-l text-blue-600 border-blue-600",
+                                {
+                                    "text-blue-600 border-blue-600":
+                                        message.severity === "INFO",
+                                    "text-red-600 border-red-600":
+                                        message.severity === "ERROR",
+                                }
+                            )}
+                        >
+                            <p className="my-0">
+                                <TextFold
+                                    text={message.message}
+                                    maxLength={80}
+                                />
+                            </p>
+                        </div>
+                    ))}
+                </>
+            )}
+            {context.edges[nodeKeySerialized]?.map((child) => (
+                <Visualizer
+                    nodeKey={child}
+                    context={context}
+                    ancestors={[...ancestors, nodeKeySerialized]}
+                />
+            ))}
+        </Foldable>
     );
 };
 
@@ -93,6 +174,8 @@ const RemoteFileSelector: React.FC<{
     onFileSelected?: (fileContent: string) => void;
     onShouldClose?: () => void;
 }> = ({ isShown, onFileSelected, onShouldClose }) => {
+    const [searchQuery, setSearchQuery] = useState("");
+
     const { data, isLoading } = useSWR<{ filename: string; size: number }[]>(
         "remote_files",
         (_: string) => {
@@ -129,12 +212,28 @@ const RemoteFileSelector: React.FC<{
         });
     }, [data, field, descending]);
 
+    const filteredFiles = useMemo(() => {
+        return sortedFiles?.filter((file) =>
+            file.filename.includes(searchQuery)
+        );
+    }, [sortedFiles, searchQuery]);
+
     return !isShown ? (
         <></>
     ) : (
         <div className="fixed left-0 top-0 h-screen w-screen flex justify-center items-center">
             <div className="w-[600px] max-w-[calc(100dvw-16px)] max-h-[calc(100dvh-16px)] border border-black bg-white rounded-lg py-2 px-4 overflow-auto">
                 <div className="grid grid-cols-2 gap-x-4">
+                    <div className="col-span-2">
+                        <input
+                            type="text"
+                            className="border border-black w-full"
+                            value={searchQuery}
+                            onChange={(event) =>
+                                setSearchQuery(event.target.value)
+                            }
+                        />
+                    </div>
                     <div
                         onClick={() => onClickHeader("filename")}
                         className="cursor-pointer sticky top-0 bg-white"
@@ -153,7 +252,7 @@ const RemoteFileSelector: React.FC<{
                             {field === "size" && (!descending ? "▲ " : "▼")}
                         </b>
                     </div>
-                    {sortedFiles?.map(({ filename, size }) => (
+                    {filteredFiles?.slice(0, 500).map(({ filename, size }) => (
                         <>
                             <div
                                 className="cursor-pointer"
@@ -164,6 +263,12 @@ const RemoteFileSelector: React.FC<{
                             <div>{size} bytes</div>
                         </>
                     ))}
+                    {filteredFiles !== undefined &&
+                        filteredFiles.length > 500 && (
+                            <div className="col-span-2 text-center text-gray-500">
+                                Only first 500 results shown.
+                            </div>
+                        )}
                 </div>
             </div>
         </div>
@@ -172,7 +277,38 @@ const RemoteFileSelector: React.FC<{
 
 export const App = () => {
     const fileRef = useRef<HTMLInputElement>(null);
-    const [node, setNode] = useState<Node | undefined>(undefined);
+    const [data, setData] = useState<VisualizerData | undefined>(undefined);
+    const context: VisualizerContext | undefined = useMemo(() => {
+        if (!data) return;
+        return {
+            nodes: Object.fromEntries(
+                data.nodes.map(([key, value]) => [serializeKey(key), value])
+            ) as Record<VisualizerNodeKeySerialized, VisualizerNodeValue>,
+            edges: data.edges
+                .map(
+                    ([key, value]) =>
+                        [serializeKey(key), value] as [
+                            VisualizerNodeKeySerialized,
+                            VisualizerNodeKey
+                        ]
+                )
+                .reduce(
+                    (
+                        map: Record<
+                            VisualizerNodeKeySerialized,
+                            VisualizerNodeKey[]
+                        >,
+                        [key, value]
+                    ) => {
+                        map[key] ??= [];
+                        map[key].push(value);
+                        return map;
+                    },
+                    {}
+                ) as Record<VisualizerNodeKeySerialized, VisualizerNodeKey[]>,
+            frames: data.frames,
+        };
+    }, [data]);
     const [isRemoteFileSelectorShown, setIsRemoteFileSelectorShown] =
         useState(false);
 
@@ -181,16 +317,16 @@ export const App = () => {
     ) => {
         if (event.target.files && event.target.files.length > 0) {
             const file = event.target.files[0];
-            setNode(JSON.parse(await readFileToString(file)));
+            setData(JSON.parse(await readFileToString(file)));
         } else {
-            setNode(undefined);
+            setData(undefined);
         }
 
         event.target.value = "";
     };
 
     const onRemoteFileSelected = async (content: string) => {
-        setNode(JSON.parse(content));
+        setData(JSON.parse(content));
     };
 
     return (
@@ -218,7 +354,17 @@ export const App = () => {
                 onChange={onFileChange}
             />
             <div>
-                {node ? <Visualizer node={node} /> : "Please choose a file."}
+                {context?.frames.map((frame) => (
+                    <div>
+                        {frame.nodes.map((node) => (
+                            <Visualizer
+                                nodeKey={node}
+                                context={context}
+                                ancestors={[]}
+                            />
+                        ))}
+                    </div>
+                ))}
             </div>
             <RemoteFileSelector
                 isShown={isRemoteFileSelectorShown}

@@ -34,7 +34,7 @@ pub struct GlobalStateInner {
     /// sorted by address. We cannot use a `HashMap` since we can be given an address that is offset
     /// from the base address, and we need to find the `AllocId` it belongs to. This is not the
     /// *full* inverse of `base_addr`; dead allocations have been removed.
-    int_to_ptr_map: Vec<(u64, AllocId)>,
+    pub int_to_ptr_map: Vec<(u64, AllocId)>,
     /// The base address for each allocation.  We cannot put that into
     /// `AllocExtra` because function pointers also have a base address, and
     /// they do not have an `AllocExtra`.
@@ -135,7 +135,11 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 // allocations will get recognized at their base address -- but all other
                 // allocations will *not* be recognized at their "end" address.
                 let size = ecx.get_alloc_info(alloc_id).0;
-                if offset < size.bytes() { Some(alloc_id) } else { None }
+                if offset < size.bytes() {
+                    Some(alloc_id)
+                } else {
+                    None
+                }
             }
         }?;
 
@@ -446,8 +450,8 @@ impl<'tcx> MiriMachine<'tcx> {
             global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr).unwrap();
         let removed = global_state.int_to_ptr_map.remove(pos);
         assert_eq!(removed, (addr, dead_id)); // double-check that we removed the right thing
-        // We can also remove it from `exposed`, since this allocation can anyway not be returned by
-        // `alloc_id_from_addr` any more.
+                                              // We can also remove it from `exposed`, since this allocation can anyway not be returned by
+                                              // `alloc_id_from_addr` any more.
         global_state.exposed.remove(&dead_id);
         // Also remember this address for future reuse.
         let thread = self.threads.active_thread();

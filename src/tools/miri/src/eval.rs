@@ -430,6 +430,10 @@ pub fn eval_entry<'tcx>(
     entry_type: EntryFnType,
     config: MiriConfig,
 ) -> Option<i64> {
+    info!(
+        "eval_entry(tcx = <tcx>, entry_id = {:?}, entry_type = {:?}, config = <config>)",
+        entry_id, entry_type,
+    );
     // Copy setting before we move `config`.
     let ignore_leaks = config.ignore_leaks;
 

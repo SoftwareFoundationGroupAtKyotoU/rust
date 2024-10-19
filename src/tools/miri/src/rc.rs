@@ -134,19 +134,18 @@ fn visualize<'tcx>(
     offset: u64,
     ty_and_layout: &TyAndLayout<'tcx>,
     _hint_length: Option<u64>,
-) -> VisualizerNode {
+) {
     let self_key = VisualizerNodeKey {
         alloc_id: alloc_id.0.into(),
         offset,
         ty: format!("{:?}", ty_and_layout.ty),
     };
-    let mut node = VisualizerNode { alloc_id: Some(alloc_id.0.into()), ..Default::default() };
     // Multiple parents may point to the same node, so we need to add the edge before returning
     if let Some(parent) = parent {
         data.add_edge(parent, self_key.clone());
     }
     if data.has_node(&self_key) {
-        return node;
+        return;
     }
 
     let mut node_context = VisualizerNodeValue::default();
@@ -158,10 +157,6 @@ fn visualize<'tcx>(
         node_context.alloc_bytes =
             alloc.get_bytes_unchecked((0..alloc.len()).into()).iter().copied().collect();
     }
-
-    // info!("reachability for {:?}", ty_and_layout.ty);
-    node.ty = format!("{:?}", ty_and_layout.ty);
-    node.offset = offset;
 
     let ty_kind = ty_and_layout.ty.kind();
     'ty_kind_match: {
@@ -204,7 +199,7 @@ fn visualize<'tcx>(
 
                 match ptr_alloc_id {
                     Some(alloc_id) => {
-                        let child = visualize(
+                        visualize(
                             data,
                             Some(self_key.clone()),
                             ecx,
@@ -213,7 +208,6 @@ fn visualize<'tcx>(
                             &ptr_ty_and_layout,
                             None,
                         );
-                        node.children.push(child);
                     }
                     None => {
                         node_context.log_error(format!(
@@ -227,8 +221,10 @@ fn visualize<'tcx>(
                 let (layout_memory_index, layout_offsets) = match &ty_and_layout.layout.fields {
                     FieldsShape::Arbitrary { memory_index, offsets } => (memory_index, offsets),
                     _ => {
-                        node.error_messages
-                            .push(format!("unknown fields: {:?}", &ty_and_layout.layout.fields));
+                        node_context.log_error(format!(
+                            "unknown fields: {:?}",
+                            &ty_and_layout.layout.fields
+                        ));
                         break 'ty_kind_match;
                     }
                 };
@@ -246,7 +242,7 @@ fn visualize<'tcx>(
 
                         let field_offset = actual_offsets[i.into()].bytes();
 
-                        let subresult = visualize(
+                        visualize(
                             data,
                             Some(self_key.clone()),
                             ecx,
@@ -255,7 +251,6 @@ fn visualize<'tcx>(
                             &field_ty_and_layout,
                             None,
                         );
-                        node.children.push(subresult);
                     }
                 }
             }
@@ -284,8 +279,10 @@ fn visualize<'tcx>(
                 let tag_offset = match &ty_and_layout.layout.fields {
                     FieldsShape::Arbitrary { offsets, .. } => offsets[(*tag_field).into()].bytes(),
                     _ => {
-                        node.error_messages
-                            .push(format!("unexpected fields: {:?}", &ty_and_layout.layout.fields));
+                        node_context.log_error(format!(
+                            "unexpected fields: {:?}",
+                            &ty_and_layout.layout.fields
+                        ));
                         break 'ty_kind_match;
                     }
                 };
@@ -344,8 +341,10 @@ fn visualize<'tcx>(
                 let (layout_memory_index, layout_offsets) = match &ty_and_layout.layout.fields {
                     FieldsShape::Arbitrary { memory_index, offsets } => (memory_index, offsets),
                     _ => {
-                        node.error_messages
-                            .push(format!("unknown fields: {:?}", &ty_and_layout.layout.fields));
+                        node_context.log_error(format!(
+                            "unknown fields: {:?}",
+                            &ty_and_layout.layout.fields
+                        ));
                         break 'ty_kind_match;
                     }
                 };
@@ -388,7 +387,7 @@ fn visualize<'tcx>(
 
                     match ptr_alloc_id {
                         Some(alloc_id) => {
-                            let child = visualize(
+                            visualize(
                                 data,
                                 Some(self_key.clone()),
                                 ecx,
@@ -397,7 +396,6 @@ fn visualize<'tcx>(
                                 &ptr_ty_and_layout,
                                 None,
                             );
-                            node.children.push(child);
                         }
                         None => {
                             node_context.log_error(format!(
@@ -426,8 +424,9 @@ fn visualize<'tcx>(
                             let Some((alloc_id, offset)) =
                                 find_alloc_id_and_offset_for_address(ecx, address)
                             else {
-                                node.error_messages
-                                    .push(format!("failed to find offset for address {address:?}"));
+                                node_context.log_error(format!(
+                                    "failed to find offset for address {address:?}"
+                                ));
                                 break 'ty_kind_match;
                             };
 
@@ -435,12 +434,12 @@ fn visualize<'tcx>(
                                 *(alloc.get_bytes_unchecked_raw().add(offset as usize + 8usize)
                                     as *const u64)
                             };
-                            node.info_messages
-                                .push(format!("slice_element_ty: {slice_element_ty:?}"));
-                            node.info_messages
-                                .push(format!("offset: {address:?}, length: {length:?}"));
+                            node_context
+                                .log_info(format!("slice_element_ty: {slice_element_ty:?}"));
+                            node_context
+                                .log_info(format!("offset: {address:?}, length: {length:?}"));
 
-                            let child = visualize(
+                            visualize(
                                 data,
                                 Some(self_key.clone()),
                                 ecx,
@@ -449,7 +448,6 @@ fn visualize<'tcx>(
                                 &ptr_ty_and_layout,
                                 Some(length),
                             );
-                            node.children.push(child);
                         }
                         other_element_kind => {
                             node_context.log_error(format!("unknown: {other_element_kind:?}"));
@@ -473,14 +471,11 @@ fn visualize<'tcx>(
     }
 
     data.add_node(self_key, node_context);
-
-    node
 }
 
 static FILE_COUNTER: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
-    let mut node = VisualizerNode::default();
     let mut data = VisualizerData::default();
 
     for current_thread_frame in ecx.active_thread_stack() {
@@ -507,15 +502,14 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
                 info!("failed to get TyAndLayout: is None");
                 continue;
             };
-
-            let frame_node = visualize(&mut data, None, ecx, alloc_id, 0, &ty_and_layout, None);
             let node_key = VisualizerNodeKey {
                 alloc_id: alloc_id.0.into(),
                 offset: 0,
                 ty: format!("{:?}", &ty_and_layout.ty),
             };
             frame.nodes.push(node_key);
-            node.children.push(frame_node);
+
+            visualize(&mut data, None, ecx, alloc_id, 0, &ty_and_layout, None);
         }
         data.add_frame(frame);
     }
@@ -527,11 +521,7 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
 
     let now = SystemTime::now();
     let timestamp = now.duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis();
-    let old_file_path = format!(".local/dumps/old_{timestamp}_{counter:06}.json");
     let new_file_path = format!(".local/dumps/data_{timestamp}_{counter:06}.json");
-    let mut file = std::fs::File::create(&old_file_path).unwrap();
-    let json = serde_json::to_string(&node).unwrap();
-    file.write_all(json.as_bytes()).unwrap();
     let mut file_new = std::fs::File::create(&new_file_path).unwrap();
     let json = serde_json::to_string(&data).unwrap();
     file_new.write_all(json.as_bytes()).unwrap();

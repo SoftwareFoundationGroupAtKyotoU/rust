@@ -48,7 +48,11 @@ export const Visualizer: React.FC<VisualizerProps> = ({
             <div>
                 bytes:{" "}
                 <TextFold
-                    text={JSON.stringify(node.alloc_bytes)}
+                    text={node.alloc_bytes
+                        .map((byte) =>
+                            byte.toString(16).padStart(2, "0").toUpperCase()
+                        )
+                        .join(" ")}
                     maxLength={80}
                 />
             </div>

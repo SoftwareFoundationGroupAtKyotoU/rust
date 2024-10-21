@@ -18,7 +18,7 @@ export const Foldable: React.FC<
                 <div>{header}</div>
             </div>
             <div
-                className="ml-8"
+                className="ml-[4ch]"
                 style={{
                     display: isFolded ? "none" : "block",
                 }}

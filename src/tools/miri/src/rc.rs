@@ -1,12 +1,15 @@
-#![allow(dead_code, unused_variables)]
+#![allow(dead_code, unused_variables, unused_imports)]
 
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
 };
 
-use crate::rustc_middle::ty::layout::{LayoutOf, MaybeResult};
 use crate::*;
+use crate::{
+    rustc_middle::ty::layout::{LayoutOf, MaybeResult},
+    MemoryKind, Provenance,
+};
 use rustc_index::IndexVec;
 use rustc_middle::ty::{layout::TyAndLayout, TyKind};
 use rustc_target::abi::{FieldIdx, FieldsShape, Integer, Primitive, Scalar, Size, Variants};
@@ -53,7 +56,13 @@ impl VisualizerNodeValue {
 
 #[derive(Serialize, Debug, Clone, Default)]
 struct VisualizerFrame {
+    description: String,
     nodes: Vec<VisualizerNodeKey>,
+}
+
+#[derive(Serialize, Debug, Clone)]
+struct VisualizerAlloc {
+    bytes: Vec<u8>,
 }
 
 #[serde_with::serde_as]
@@ -63,6 +72,7 @@ struct VisualizerData {
     nodes: HashMap<VisualizerNodeKey, VisualizerNodeValue>,
     edges: HashSet<(VisualizerNodeKey, VisualizerNodeKey)>,
     frames: Vec<VisualizerFrame>,
+    allocs: HashMap<u64, VisualizerAlloc>,
 }
 
 impl VisualizerData {
@@ -184,9 +194,6 @@ fn visualize<'tcx>(
                 // TODO: find reverse dead allocations
                 // base_addr seems to be have the full information
                 let offset_to_alloc_id_map = &global_state.int_to_ptr_map;
-
-                info!("offset_to_alloc_id_map: {offset_to_alloc_id_map:?}");
-                info!("address: {address:?}");
 
                 // TODO: improve algorithm here (use binary search)
                 let mut ptr_alloc_id: Option<AllocId> = None;
@@ -373,9 +380,6 @@ fn visualize<'tcx>(
                     // base_addr seems to be have the full information
                     let offset_to_alloc_id_map = &global_state.int_to_ptr_map;
 
-                    info!("offset_to_alloc_id_map: {offset_to_alloc_id_map:?}");
-                    info!("address: {address:?}");
-
                     // TODO: improve algorithm here (use binary search)
                     let mut ptr_alloc_id: Option<AllocId> = None;
 
@@ -475,12 +479,27 @@ fn visualize<'tcx>(
 
 static FILE_COUNTER: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
+fn alloc_map_to_entry<'tcx>(
+    alloc_id: &AllocId,
+    (_memory_kind, alloc): &(MemoryKind, Allocation<Provenance, AllocExtra<'tcx>, MiriAllocBytes>),
+) -> Option<(u64, VisualizerAlloc)> {
+    let alloc_id: u64 = alloc_id.0.into();
+    Some((
+        alloc_id,
+        VisualizerAlloc {
+            bytes: alloc.get_bytes_unchecked((0..alloc.len()).into()).iter().copied().collect::<Vec<u8>>()
+        },
+    ))
+}
+
 pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
     let mut data = VisualizerData::default();
 
+    data.allocs = ecx.memory.alloc_map().filter_map_collect(alloc_map_to_entry).into_iter().collect();
+
     for current_thread_frame in ecx.active_thread_stack() {
         let mut frame = VisualizerFrame::default();
-        info!("before_stack_pop has frame {:?}", current_thread_frame.current_source_info());
+        frame.description = format!("{:?}", current_thread_frame.current_source_info());
         for (_idx, local) in current_thread_frame.locals.iter_enumerated() {
             let Some(alloc_id) = (match local.as_mplace_or_imm() {
                 Some(either::Either::Left((ptr, _mp))) =>

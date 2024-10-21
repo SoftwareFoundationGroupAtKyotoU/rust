@@ -1,50 +1,23 @@
 import React, { useMemo, useRef, useState } from "react";
 import {
-    serializeKey,
+    toVisualizerContext,
     VisualizerContext,
     VisualizerData,
-    VisualizerNodeKey,
-    VisualizerNodeKeySerialized,
-    VisualizerNodeValue,
 } from "./types";
 import { readFileToString } from "./utils";
 import { Visualizer } from "./parts/Visualizer";
 import { RemoteFileSelector } from "./parts/RemoteFileSelector";
+import { Foldable } from "./components/Foldable";
 
 export const App = () => {
     const fileRef = useRef<HTMLInputElement>(null);
     const [data, setData] = useState<VisualizerData | undefined>(undefined);
-    const context: VisualizerContext | undefined = useMemo(() => {
-        if (!data) return;
-        return {
-            nodes: Object.fromEntries(
-                data.nodes.map(([key, value]) => [serializeKey(key), value])
-            ) as Record<VisualizerNodeKeySerialized, VisualizerNodeValue>,
-            edges: data.edges
-                .map(
-                    ([key, value]) =>
-                        [serializeKey(key), value] as [
-                            VisualizerNodeKeySerialized,
-                            VisualizerNodeKey
-                        ]
-                )
-                .reduce(
-                    (
-                        map: Record<
-                            VisualizerNodeKeySerialized,
-                            VisualizerNodeKey[]
-                        >,
-                        [key, value]
-                    ) => {
-                        map[key] ??= [];
-                        map[key].push(value);
-                        return map;
-                    },
-                    {}
-                ) as Record<VisualizerNodeKeySerialized, VisualizerNodeKey[]>,
-            frames: data.frames,
-        };
-    }, [data]);
+
+    const context: VisualizerContext | undefined = useMemo(
+        () => (data ? toVisualizerContext(data) : undefined),
+        [data]
+    );
+
     const [isRemoteFileSelectorShown, setIsRemoteFileSelectorShown] =
         useState(false);
 
@@ -89,24 +62,51 @@ export const App = () => {
                 ref={fileRef}
                 onChange={onFileChange}
             />
-            <div>
-                {context?.frames.map((frame) => (
-                    <div>
-                        {frame.nodes.map((node) => (
-                            <Visualizer
-                                nodeKey={node}
-                                context={context}
-                                ancestors={[]}
-                            />
-                        ))}
-                    </div>
-                ))}
-            </div>
-            <RemoteFileSelector
-                isShown={isRemoteFileSelectorShown}
-                onFileSelected={onRemoteFileSelected}
-                onShouldClose={() => void setIsRemoteFileSelectorShown(false)}
-            />
+            <Foldable header="Alloc list">
+                <div>
+                    {Object.entries(context?.allocs ?? {}).map(
+                        ([allocId, alloc]) => (
+                            <Foldable
+                                header={`Alloc ${allocId} (${alloc.bytes.length} bytes)`}
+                            >
+                                {/* Check reachable or not through the alloc graph */}
+                                <div>
+                                    {alloc.bytes
+                                        .map((byte) =>
+                                            byte
+                                                .toString(16)
+                                                .padStart(2, "0")
+                                                .toUpperCase()
+                                        )
+                                        .join(" ")}
+                                </div>
+                            </Foldable>
+                        )
+                    )}
+                </div>
+            </Foldable>
+            <Foldable header={<>Alloc graph</>}>
+                <div>
+                    {context?.frames.map((frame) => (
+                        <Foldable header={<>frame {frame.description}</>}>
+                            {frame.nodes.map((node) => (
+                                <Visualizer
+                                    nodeKey={node}
+                                    context={context}
+                                    ancestors={[]}
+                                />
+                            ))}
+                        </Foldable>
+                    ))}
+                </div>
+                <RemoteFileSelector
+                    isShown={isRemoteFileSelectorShown}
+                    onFileSelected={onRemoteFileSelected}
+                    onShouldClose={() =>
+                        void setIsRemoteFileSelectorShown(false)
+                    }
+                />
+            </Foldable>
         </div>
     );
 };

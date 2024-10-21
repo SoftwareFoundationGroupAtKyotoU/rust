@@ -10,6 +10,7 @@ import { Visualizer } from "./parts/Visualizer";
 import { RemoteFileSelector } from "./parts/RemoteFileSelector";
 import { Foldable } from "./components/Foldable";
 import clsx from "clsx";
+import { AllocListHeader } from "./parts/AllocListHeader";
 
 export const App = () => {
     const fileRef = useRef<HTMLInputElement>(null);
@@ -64,7 +65,7 @@ export const App = () => {
                 ref={fileRef}
                 onChange={onFileChange}
             />
-            <Foldable header="Alloc list">
+            <Foldable header={<AllocListHeader context={context} />}>
                 <div>
                     {Object.entries(context?.allocs ?? {}).map(
                         ([allocId, alloc]) => (

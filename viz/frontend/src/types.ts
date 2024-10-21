@@ -52,6 +52,13 @@ export const serializeKey = (
         key.ty,
     ]) as VisualizerNodeKeySerialized;
 
+export const deserializeKey = (
+    keySerialized: VisualizerNodeKeySerialized
+): VisualizerNodeKey => {
+    const [alloc_id, offset, ty] = JSON.parse(keySerialized);
+    return { alloc_id, offset, ty };
+};
+
 // const mapReducer = <K extends string | number | symbol, V>(
 //     map: Record<K, V>,
 //     [k, v]: [K, V]

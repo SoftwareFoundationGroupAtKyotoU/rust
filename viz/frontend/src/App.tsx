@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from "react";
 import {
     toVisualizerContext,
+    VisualizerAllocId,
     VisualizerContext,
     VisualizerData,
 } from "./types";
@@ -8,6 +9,7 @@ import { readFileToString } from "./utils";
 import { Visualizer } from "./parts/Visualizer";
 import { RemoteFileSelector } from "./parts/RemoteFileSelector";
 import { Foldable } from "./components/Foldable";
+import clsx from "clsx";
 
 export const App = () => {
     const fileRef = useRef<HTMLInputElement>(null);
@@ -66,21 +68,37 @@ export const App = () => {
                 <div>
                     {Object.entries(context?.allocs ?? {}).map(
                         ([allocId, alloc]) => (
-                            <Foldable
-                                header={`Alloc ${allocId} (${alloc.bytes.length} bytes)`}
+                            <div
+                                className={clsx({
+                                    "text-red-600":
+                                        !context?.reachableAllocIds.has(
+                                            +allocId as VisualizerAllocId
+                                        ),
+                                    "text-green-600":
+                                        context?.reachableAllocIds.has(
+                                            +allocId as VisualizerAllocId
+                                        ),
+                                })}
                             >
-                                {/* Check reachable or not through the alloc graph */}
-                                <div>
-                                    {alloc.bytes
-                                        .map((byte) =>
-                                            byte
-                                                .toString(16)
-                                                .padStart(2, "0")
-                                                .toUpperCase()
-                                        )
-                                        .join(" ")}
-                                </div>
-                            </Foldable>
+                                <Foldable
+                                    header={`Alloc ${allocId} (${alloc.bytes.length} bytes)`}
+                                >
+                                    {/* Check reachable or not through the alloc graph */}
+                                    <div className="flex gap-[1ch]">
+                                        <div>bytes:</div>
+                                        <div>
+                                            {alloc.bytes
+                                                .map((byte) =>
+                                                    byte
+                                                        .toString(16)
+                                                        .padStart(2, "0")
+                                                        .toUpperCase()
+                                                )
+                                                .join(" ")}
+                                        </div>
+                                    </div>
+                                </Foldable>
+                            </div>
                         )
                     )}
                 </div>

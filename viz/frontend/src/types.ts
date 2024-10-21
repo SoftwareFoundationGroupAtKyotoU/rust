@@ -34,10 +34,11 @@ export type VisualizerContext = {
     edges: Record<VisualizerNodeKeySerialized, VisualizerNodeKey[]>;
     frames: VisualizerFrame[];
     allocs: Record<VisualizerAllocId, VisualizerAlloc>;
+    reachableAllocIds: Set<VisualizerAllocId>;
 };
 
 export type VisualizerNodeKey = {
-    alloc_id: number;
+    alloc_id: VisualizerAllocId;
     offset: number;
     ty: string;
 };
@@ -51,10 +52,10 @@ export const serializeKey = (
         key.ty,
     ]) as VisualizerNodeKeySerialized;
 
-const mapReducer = <K extends string | number | symbol, V>(
-    map: Record<K, V>,
-    [k, v]: [K, V]
-): Record<K, V> => ((map[k] = v), map);
+// const mapReducer = <K extends string | number | symbol, V>(
+//     map: Record<K, V>,
+//     [k, v]: [K, V]
+// ): Record<K, V> => ((map[k] = v), map);
 
 const mapListReducer = <K extends string | number | symbol, V>(
     map: Record<K, V[]>,
@@ -82,5 +83,6 @@ export const toVisualizerContext = (
         >,
         allocs: data.allocs,
         frames: data.frames,
+        reachableAllocIds: new Set(data.nodes.map(([key]) => key.alloc_id)),
     };
 };

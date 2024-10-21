@@ -61,7 +61,7 @@ export const Visualizer: React.FC<VisualizerProps> = ({
                     {node.messages.map((message) => (
                         <div
                             className={clsx(
-                                "ml-8 pl-2 border-l text-blue-600 border-blue-600",
+                                "ml-[4ch] pl-2 border-l text-blue-600 border-blue-600",
                                 {
                                     "text-blue-600 border-blue-600":
                                         message.severity === "INFO",

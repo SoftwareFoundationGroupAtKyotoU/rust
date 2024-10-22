@@ -6,3 +6,16 @@ export function readFileToString(file: File): Promise<string> {
         reader.readAsText(file);
     });
 }
+
+export function chunk<T>(array: T[], size: number): T[][] {
+    if (size <= 0) {
+        throw new Error("Chunk size must be greater than 0");
+    }
+
+    const chunkedArray: T[][] = [];
+    for (let i = 0; i < array.length; i += size) {
+        chunkedArray.push(array.slice(i, i + size));
+    }
+
+    return chunkedArray;
+}

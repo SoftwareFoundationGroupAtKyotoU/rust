@@ -7,6 +7,7 @@ import {
     VisualizerNodeKeySerialized,
     serializeKey,
 } from "../types";
+import { BytesDisplay } from "../components/BytesDisplay";
 
 type VisualizerProps = {
     nodeKey: VisualizerNodeKey;
@@ -45,16 +46,9 @@ export const AllocGraph: React.FC<VisualizerProps> = ({
     return (
         <Foldable header={header}>
             <a id={`node_${nodeKeySerialized}`}></a>
-            <div>
-                bytes:{" "}
-                <TextFold
-                    text={node.alloc_bytes
-                        .map((byte) =>
-                            byte.toString(16).padStart(2, "0").toUpperCase()
-                        )
-                        .join(" ")}
-                    maxLength={80}
-                />
+            <div className="flex gap-[1ch]">
+                <span>bytes:</span>
+                <BytesDisplay bytes={node.alloc_bytes} />
             </div>
             {node.messages.length > 0 && (
                 <>

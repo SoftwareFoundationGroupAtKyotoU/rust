@@ -4,6 +4,7 @@ import { Foldable } from "../components/Foldable";
 import { VisualizerAllocId, VisualizerContext } from "../types";
 import { AllocGraph } from "./AllocGraph";
 import { AllocListHeader } from "./AllocListHeader";
+import { BytesDisplay } from "../components/BytesDisplay";
 
 type VisualizerProps = { context: VisualizerContext };
 
@@ -33,17 +34,10 @@ export const Visualizer: React.FC<VisualizerProps> = ({ context }) => {
                                     header={`Alloc ${allocId} (${alloc.bytes.length} bytes)`}
                                 >
                                     {/* Check reachable or not through the alloc graph */}
-                                    <div className="flex gap-[0ch]">
-                                        <div>bytes:</div>
+                                    <div className="flex gap-[1ch]">
+                                        <span>bytes:</span>
                                         <div>
-                                            {alloc.bytes
-                                                .map((byte) =>
-                                                    byte
-                                                        .toString(16)
-                                                        .padStart(2, "0")
-                                                        .toUpperCase()
-                                                )
-                                                .join(" ")}
+                                            <BytesDisplay bytes={alloc.bytes} />
                                         </div>
                                     </div>
                                 </Foldable>

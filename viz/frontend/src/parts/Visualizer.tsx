@@ -1,92 +1,72 @@
 import clsx from "clsx";
+import React from "react";
 import { Foldable } from "../components/Foldable";
-import { TextFold } from "../components/TextFold";
-import {
-    VisualizerNodeKey,
-    VisualizerContext,
-    VisualizerNodeKeySerialized,
-    serializeKey,
-} from "../types";
+import { VisualizerAllocId, VisualizerContext } from "../types";
+import { AllocGraph } from "./AllocGraph";
+import { AllocListHeader } from "./AllocListHeader";
 
-type VisualizerProps = {
-    nodeKey: VisualizerNodeKey;
-    context: VisualizerContext;
-    ancestors: VisualizerNodeKeySerialized[];
-};
+type VisualizerProps = { context: VisualizerContext };
 
-export const Visualizer: React.FC<VisualizerProps> = ({
-    nodeKey,
-    context,
-    ancestors,
-}) => {
-    const nodeKeySerialized = serializeKey(nodeKey);
-    const node = context.nodes[nodeKeySerialized];
-
-    const header = (
-        <>
-            {" "}
-            <b>alloc_id:</b> {nodeKey.alloc_id ?? "none"}, <b>offset: </b>
-            {nodeKey.offset ?? "none"}, <b>ty: </b>{" "}
-            <TextFold text={nodeKey.ty ?? "none"} maxLength={50} />
-        </>
-    );
-
-    if (ancestors.includes(nodeKeySerialized)) {
-        return (
-            <a
-                className="text-green-600 border-green-600"
-                href={`#node_${nodeKeySerialized}`}
-            >
-                (loop) {header}
-            </a>
-        );
-    }
-
+export const Visualizer: React.FC<VisualizerProps> = ({ context }) => {
     return (
-        <Foldable header={header}>
-            <a id={`node_${nodeKeySerialized}`}></a>
-            <div>
-                bytes:{" "}
-                <TextFold
-                    text={node.alloc_bytes
-                        .map((byte) =>
-                            byte.toString(16).padStart(2, "0").toUpperCase()
+        <>
+            <Foldable
+                header={<AllocListHeader context={context} />}
+                defaultFolded
+            >
+                <div>
+                    {Object.entries(context?.allocs ?? {}).map(
+                        ([allocId, alloc]) => (
+                            <div
+                                className={clsx({
+                                    "text-red-600":
+                                        !context?.reachableAllocIds.has(
+                                            +allocId as VisualizerAllocId
+                                        ),
+                                    "text-green-600":
+                                        context?.reachableAllocIds.has(
+                                            +allocId as VisualizerAllocId
+                                        ),
+                                })}
+                            >
+                                <Foldable
+                                    header={`Alloc ${allocId} (${alloc.bytes.length} bytes)`}
+                                >
+                                    {/* Check reachable or not through the alloc graph */}
+                                    <div className="flex gap-[0ch]">
+                                        <div>bytes:</div>
+                                        <div>
+                                            {alloc.bytes
+                                                .map((byte) =>
+                                                    byte
+                                                        .toString(16)
+                                                        .padStart(2, "0")
+                                                        .toUpperCase()
+                                                )
+                                                .join(" ")}
+                                        </div>
+                                    </div>
+                                </Foldable>
+                            </div>
                         )
-                        .join(" ")}
-                    maxLength={80}
-                />
-            </div>
-            {node.messages.length > 0 && (
-                <>
-                    {node.messages.map((message) => (
-                        <div
-                            className={clsx(
-                                "ml-[4ch] pl-2 border-l text-blue-600 border-blue-600",
-                                {
-                                    "text-blue-600 border-blue-600":
-                                        message.severity === "INFO",
-                                    "text-red-600 border-red-600":
-                                        message.severity === "ERROR",
-                                }
-                            )}
-                        >
-                            <p className="my-0">
-                                <TextFold
-                                    text={message.message}
-                                    maxLength={80}
+                    )}
+                </div>
+            </Foldable>
+            <Foldable header={<>Alloc graph</>} defaultFolded>
+                <div>
+                    {context?.frames.map((frame) => (
+                        <Foldable header={<>frame {frame.description}</>}>
+                            {frame.nodes.map((node) => (
+                                <AllocGraph
+                                    nodeKey={node}
+                                    context={context}
+                                    ancestors={[]}
                                 />
-                            </p>
-                        </div>
+                            ))}
+                        </Foldable>
                     ))}
-                </>
-            )}
-            {context.edges[nodeKeySerialized]?.map((child) => (
-                <Visualizer
-                    nodeKey={child}
-                    context={context}
-                    ancestors={[...ancestors, nodeKeySerialized]}
-                />
-            ))}
-        </Foldable>
+                </div>
+            </Foldable>
+        </>
     );
 };

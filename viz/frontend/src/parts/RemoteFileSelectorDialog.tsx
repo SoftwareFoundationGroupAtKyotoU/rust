@@ -1,29 +1,31 @@
 import { useState, useCallback, useMemo } from "react";
 import useSWR from "swr";
 
-export const RemoteFileSelector: React.FC<{
+export const RemoteFileSelectorDialog: React.FC<{
     isShown: boolean;
     onFileSelected?: (fileContent: string) => void;
     onShouldClose?: () => void;
 }> = ({ isShown, onFileSelected, onShouldClose }) => {
     const [searchQuery, setSearchQuery] = useState("");
 
-    const { data, isLoading: _ } = useSWR<{ filename: string; size: number }[]>(
-        "remote_files",
-        (_: string) => {
-            return fetch("/api/files").then((res) => res.json());
-        }
+    const { data: remoteFilesData, isLoading: _ } = useSWR<
+        { filename: string; size: number }[]
+    >("remote_files", (_: string) => {
+        return fetch("/api/files").then((res) => res.json());
+    });
+
+    const openFile = useCallback(
+        async (filename: string) => {
+            const url = new URL(document.location.href);
+            url.pathname = "/api/file";
+            url.searchParams.append("filename", filename);
+
+            const json = await fetch(url).then((res) => res.text());
+            onFileSelected?.(json);
+            onShouldClose?.();
+        },
+        [onFileSelected, onShouldClose]
     );
-
-    const openFile = useCallback(async (filename: string) => {
-        const url = new URL(document.location.href);
-        url.pathname = "/api/file";
-        url.searchParams.append("filename", filename);
-
-        const json = await fetch(url).then((res) => res.text());
-        onFileSelected?.(json);
-        onShouldClose?.();
-    }, []);
 
     const [[field, descending], setSortCriterion] = useState<
         [field: "filename" | "size", descending: boolean]
@@ -37,12 +39,12 @@ export const RemoteFileSelector: React.FC<{
     };
 
     const sortedFiles = useMemo(() => {
-        return data?.sort((file1, file2) => {
+        return remoteFilesData?.sort((file1, file2) => {
             return (
                 (descending ? -1 : 1) * (file1[field] < file2[field] ? -1 : 1)
             );
         });
-    }, [data, field, descending]);
+    }, [remoteFilesData, field, descending]);
 
     const filteredFiles = useMemo(() => {
         return sortedFiles?.filter((file) =>

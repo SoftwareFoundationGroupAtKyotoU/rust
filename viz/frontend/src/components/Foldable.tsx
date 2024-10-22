@@ -1,9 +1,16 @@
-import { useState } from "react";
+import React, { useState } from "react";
 
-export const Foldable: React.FC<
-    React.PropsWithChildren<{ header: React.ReactNode }>
-> = ({ header, children }) => {
-    const [isFolded, setIsFolded] = useState(false);
+type FoldableProps = {
+    header: React.ReactNode;
+    defaultFolded?: boolean;
+};
+
+export const Foldable: React.FC<React.PropsWithChildren<FoldableProps>> = ({
+    header,
+    children,
+    defaultFolded,
+}) => {
+    const [isFolded, setIsFolded] = useState(defaultFolded ?? false);
 
     return (
         <div

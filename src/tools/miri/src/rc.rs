@@ -1,19 +1,16 @@
 #![allow(dead_code, unused_variables, unused_imports)]
 
-use std::{
-    collections::{HashMap, HashSet},
-    hash::Hash,
-};
+use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 
-use crate::*;
-use crate::{
-    rustc_middle::ty::layout::{LayoutOf, MaybeResult},
-    MemoryKind, Provenance,
-};
 use rustc_index::IndexVec;
-use rustc_middle::ty::{layout::TyAndLayout, TyKind};
+use rustc_middle::ty::TyKind;
+use rustc_middle::ty::layout::TyAndLayout;
 use rustc_target::abi::{FieldIdx, FieldsShape, Integer, Primitive, Scalar, Size, Variants};
 use serde::Serialize;
+
+use crate::rustc_middle::ty::layout::{LayoutOf, MaybeResult};
+use crate::{MemoryKind, Provenance, *};
 
 #[derive(serde::Serialize, Default)]
 struct VisualizerNode {
@@ -62,6 +59,7 @@ struct VisualizerFrame {
 
 #[derive(Serialize, Debug, Clone)]
 struct VisualizerAlloc {
+    memory_kind: String,
     bytes: Vec<u8>,
 }
 
@@ -481,21 +479,24 @@ static FILE_COUNTER: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32
 
 fn alloc_map_to_entry<'tcx>(
     alloc_id: &AllocId,
-    (_memory_kind, alloc): &(MemoryKind, Allocation<Provenance, AllocExtra<'tcx>, MiriAllocBytes>),
+    (memory_kind, alloc): &(MemoryKind, Allocation<Provenance, AllocExtra<'tcx>, MiriAllocBytes>),
 ) -> Option<(u64, VisualizerAlloc)> {
     let alloc_id: u64 = alloc_id.0.into();
-    Some((
-        alloc_id,
-        VisualizerAlloc {
-            bytes: alloc.get_bytes_unchecked((0..alloc.len()).into()).iter().copied().collect::<Vec<u8>>()
-        },
-    ))
+    Some((alloc_id, VisualizerAlloc {
+        memory_kind: format!("{:?}", memory_kind),
+        bytes: alloc
+            .get_bytes_unchecked((0..alloc.len()).into())
+            .iter()
+            .copied()
+            .collect::<Vec<u8>>(),
+    }))
 }
 
 pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
     let mut data = VisualizerData::default();
 
-    data.allocs = ecx.memory.alloc_map().filter_map_collect(alloc_map_to_entry).into_iter().collect();
+    data.allocs =
+        ecx.memory.alloc_map().filter_map_collect(alloc_map_to_entry).into_iter().collect();
 
     for current_thread_frame in ecx.active_thread_stack() {
         let mut frame = VisualizerFrame::default();

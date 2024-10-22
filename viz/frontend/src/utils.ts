@@ -19,3 +19,12 @@ export function chunk<T>(array: T[], size: number): T[][] {
 
     return chunkedArray;
 }
+
+export function tally<T extends string | number | symbol>(
+    items: T[]
+): Record<T, number> {
+    return items.reduce((acc, item) => {
+        acc[item] = (acc[item] ?? 0) + 1;
+        return acc;
+    }, {} as Record<T, number>);
+}

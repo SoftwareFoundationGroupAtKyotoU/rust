@@ -1,9 +1,12 @@
 import React from "react";
 import {
     deserializeKey,
+    VisualizerAllocId,
     VisualizerContext,
     VisualizerNodeKeySerialized,
 } from "../types";
+import { computeLeakedState } from "../memory";
+import { tally } from "../utils";
 
 type AllocListHeaderProps = {
     context?: VisualizerContext;
@@ -15,17 +18,28 @@ export const AllocListHeader: React.FC<AllocListHeaderProps> = ({
     if (!context) {
         return <>Alloc list</>;
     }
-    const allocIds = new Set(Object.keys(context.allocs).map((id) => +id));
     const reachableAllocIds = new Set(
         Object.keys(context.nodes)
             .map((key) => deserializeKey(key as VisualizerNodeKeySerialized))
             .map((key) => key.alloc_id)
-            .filter((id) => allocIds.has(id))
     );
-    console.log(allocIds, reachableAllocIds);
+
+    const leakedStatesCount = tally(
+        Object.keys(context.allocs)
+            .map((id) => +id as VisualizerAllocId)
+            .map((id) =>
+                computeLeakedState(
+                    context.allocs[id].memory_kind,
+                    reachableAllocIds.has(id)
+                )
+            )
+    );
+
     return (
         <>
-            Alloc list ({reachableAllocIds.size}/{allocIds.size} reachable)
+            Alloc list ({leakedStatesCount.Leaked ?? 0} leaked,{" "}
+            {leakedStatesCount.Reachable ?? 0} reachable,{" "}
+            {leakedStatesCount.Unleakable ?? 0} unleakable)
         </>
     );
 };

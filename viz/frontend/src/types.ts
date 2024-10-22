@@ -1,3 +1,5 @@
+import { MemoryKind } from "./memory";
+
 type NominalType<TName extends string, TValue> = TValue & { __type: TName };
 
 export type VisualizerNodeKeySerialized = NominalType<
@@ -18,6 +20,7 @@ export type VisualizerFrame = {
 };
 
 export type VisualizerAlloc = {
+    memory_kind: MemoryKind;
     bytes: number[];
 };
 

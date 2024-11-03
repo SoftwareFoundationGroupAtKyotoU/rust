@@ -12,16 +12,6 @@ use serde::Serialize;
 use crate::rustc_middle::ty::layout::{LayoutOf, MaybeResult};
 use crate::{MemoryKind, Provenance, *};
 
-#[derive(serde::Serialize, Default)]
-struct VisualizerNode {
-    alloc_id: Option<u64>,
-    ty: String,
-    offset: u64,
-    info_messages: Vec<String>,
-    error_messages: Vec<String>,
-    children: Vec<VisualizerNode>,
-}
-
 #[derive(Serialize, Debug, Clone, PartialEq, Eq, Hash)]
 struct VisualizerNodeKey {
     alloc_id: u64,
@@ -71,6 +61,21 @@ struct VisualizerData {
     edges: HashSet<(VisualizerNodeKey, VisualizerNodeKey)>,
     frames: Vec<VisualizerFrame>,
     allocs: HashMap<u64, VisualizerAlloc>,
+    /// Map from AllocID to [AllocID]
+    provenance_static_roots: Vec<u64>,
+    /// AllocID containing wildcard provenance
+    provenance_wildcard: HashSet<u64>,
+    /// Exposed provenances
+    provenance_exposed: HashSet<u64>,
+    provenance_frames: Vec<VisualizerProvenanceFrame>,
+    #[serde_as(as = "Vec<(_, _)>")]
+    provenance_graph: HashMap<u64, HashSet<u64>>,
+}
+
+#[derive(Serialize, Debug, Clone, Default)]
+struct VisualizerProvenanceFrame {
+    description: String,
+    nodes: HashSet<u64>,
 }
 
 impl VisualizerData {
@@ -109,28 +114,45 @@ fn usable_offset(
 
 fn find_alloc_id_and_offset_for_address<'tcx>(
     ecx: &InterpCx<'tcx, MiriMachine<'tcx>>,
-    address: u64,
+    addr: u64,
 ) -> Option<(AllocId, u64)> {
-    let global_state = &*(ecx.machine.alloc_addresses.borrow());
+    let global_state = ecx.machine.alloc_addresses.borrow();
+    let pos = global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr);
 
-    // This is not the full inverse of base_addr; **dead allocations** have been removed.
-    // TODO: find reverse dead allocations
-    // base_addr seems to be have the full information
-    let offset_to_alloc_id_map = &global_state.int_to_ptr_map;
-
-    // TODO: improve algorithm here (use binary search)
-    let mut ptr_alloc_id: Option<AllocId> = None;
-
-    // TODO: support non-zero offset
-    for &(offset, alloc_id) in offset_to_alloc_id_map {
-        if offset == address {
-            ptr_alloc_id = Some(alloc_id);
+    let alloc_id = match pos {
+        Ok(pos) => Some(global_state.int_to_ptr_map[pos].1),
+        Err(0) => None,
+        Err(pos) => {
+            // This is the largest of the addresses smaller than `int`,
+            // i.e. the greatest lower bound (glb)
+            let (glb, alloc_id) = global_state.int_to_ptr_map[pos - 1];
+            // This never overflows because `addr >= glb`
+            let offset = addr - glb;
+            // We require this to be strict in-bounds of the allocation. This arm is only
+            // entered for addresses that are not the base address, so even zero-sized
+            // allocations will get recognized at their base address -- but all other
+            // allocations will *not* be recognized at their "end" address.
+            let size = ecx.get_alloc_info(alloc_id).0;
+            if offset < size.bytes() { Some(alloc_id) } else { None }
         }
-    }
+    }?;
 
-    match ptr_alloc_id {
-        Some(alloc_id) => Some((alloc_id, 0)),
-        None => None,
+    // // We only use this provenance if it has been exposed.
+    // if global_state.exposed.contains(&alloc_id) {
+    //     // This must still be live, since we remove allocations from `int_to_ptr_map` when they get freed.
+    //     debug_assert!(ecx.is_alloc_live(alloc_id));
+    //     Some(alloc_id)
+    // } else {
+    //     None
+    // }
+
+    let alloc_addr_base = global_state.base_addr[&alloc_id];
+
+    if addr >= alloc_addr_base {
+        Some((alloc_id, addr - alloc_addr_base))
+    } else {
+        // TODO: check error
+        None
     }
 }
 
@@ -187,39 +209,23 @@ fn visualize<'tcx>(
                     *(alloc.get_bytes_unchecked_raw().add(offset as usize) as *const u64)
                 };
 
-                let global_state = &*(ecx.machine.alloc_addresses.borrow());
-                // This is not the full inverse of base_addr; **dead allocations** have been removed.
-                // TODO: find reverse dead allocations
-                // base_addr seems to be have the full information
-                let offset_to_alloc_id_map = &global_state.int_to_ptr_map;
+                let Some((alloc_id, offset)) = find_alloc_id_and_offset_for_address(ecx, address)
+                else {
+                    node_context.log_error(format!(
+                        "cannot convert address {address:?} to alloc id and offset"
+                    ));
+                    break 'ty_kind_match;
+                };
 
-                // TODO: improve algorithm here (use binary search)
-                let mut ptr_alloc_id: Option<AllocId> = None;
-
-                for &(offset, alloc_id) in offset_to_alloc_id_map {
-                    if offset == address {
-                        ptr_alloc_id = Some(alloc_id);
-                    }
-                }
-
-                match ptr_alloc_id {
-                    Some(alloc_id) => {
-                        visualize(
-                            data,
-                            Some(self_key.clone()),
-                            ecx,
-                            alloc_id,
-                            0,
-                            &ptr_ty_and_layout,
-                            None,
-                        );
-                    }
-                    None => {
-                        node_context.log_error(format!(
-                            "cannot find offset {offset:?} in offset_to_alloc_id_map"
-                        ));
-                    }
-                }
+                visualize(
+                    data,
+                    Some(self_key.clone()),
+                    ecx,
+                    alloc_id,
+                    offset,
+                    &ptr_ty_and_layout,
+                    None,
+                );
             }
 
             TyKind::Adt(adt_def, adt_args) if adt_def.is_struct() => {
@@ -265,6 +271,12 @@ fn visualize<'tcx>(
                 node_context.log_error(format!("todo: enum ty_kind {ty_kind:?}"));
                 node_context.log_error(format!("todo: enum {adt_def:?}"));
                 node_context.log_info(format!("layout: {layout:#?}"));
+
+                // e.g. Result<isize, !>
+                if let Variants::Single { index } = &ty_and_layout.layout.variants {
+                    // TODO: implement single-variant enum
+                    break 'ty_kind_match;
+                }
 
                 let Variants::Multiple { tag, tag_encoding, tag_field, variants } =
                     &ty_and_layout.layout.variants
@@ -372,39 +384,24 @@ fn visualize<'tcx>(
                         *(alloc.get_bytes_unchecked_raw().add(offset as usize) as *const u64)
                     };
 
-                    let global_state = &*(ecx.machine.alloc_addresses.borrow());
-                    // This is not the full inverse of base_addr; **dead allocations** have been removed.
-                    // TODO: find reverse dead allocations
-                    // base_addr seems to be have the full information
-                    let offset_to_alloc_id_map = &global_state.int_to_ptr_map;
+                    let Some((alloc_id, offset)) =
+                        find_alloc_id_and_offset_for_address(ecx, address)
+                    else {
+                        node_context.log_error(format!(
+                            "cannot convert address {address:?} to alloc id and offset"
+                        ));
+                        break 'ty_kind_match;
+                    };
 
-                    // TODO: improve algorithm here (use binary search)
-                    let mut ptr_alloc_id: Option<AllocId> = None;
-
-                    for &(offset, alloc_id) in offset_to_alloc_id_map {
-                        if offset == address {
-                            ptr_alloc_id = Some(alloc_id);
-                        }
-                    }
-
-                    match ptr_alloc_id {
-                        Some(alloc_id) => {
-                            visualize(
-                                data,
-                                Some(self_key.clone()),
-                                ecx,
-                                alloc_id,
-                                0,
-                                &ptr_ty_and_layout,
-                                None,
-                            );
-                        }
-                        None => {
-                            node_context.log_error(format!(
-                                "cannot find offset {offset:?} in offset_to_alloc_id_map"
-                            ));
-                        }
-                    }
+                    visualize(
+                        data,
+                        Some(self_key.clone()),
+                        ecx,
+                        alloc_id,
+                        offset,
+                        &ptr_ty_and_layout,
+                        None,
+                    );
                 } else {
                     let Some((_memory_kind, alloc)) = alloc else {
                         node_context.log_error("alloc is null".to_string());
@@ -498,40 +495,112 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
     data.allocs =
         ecx.memory.alloc_map().filter_map_collect(alloc_map_to_entry).into_iter().collect();
 
+    // Fill provenance-graph related fields
+    ecx.memory.alloc_map().iter(|it| {
+        for (alloc_id, (kind, alloc)) in it {
+            for prov in alloc.provenance().provenances() {
+                match prov {
+                    crate::Provenance::Concrete { alloc_id: prov_alloc_id, tag } => {
+                        data.provenance_graph
+                            .entry(alloc_id.0.get())
+                            .or_default()
+                            .insert(prov_alloc_id.0.get());
+                    }
+                    crate::Provenance::Wildcard => {
+                        data.provenance_wildcard.insert(alloc_id.0.get());
+                    }
+                }
+            }
+        }
+    });
+
+    println!("static roots: {:?}", &ecx.machine.static_roots);
+
+    data.provenance_exposed =
+        ecx.machine.alloc_addresses.borrow().exposed.iter().map(|id| id.0.get()).collect();
+    data.provenance_static_roots = ecx.machine.static_roots.iter().map(|a| a.0.get()).collect();
+
     for current_thread_frame in ecx.active_thread_stack() {
         let mut frame = VisualizerFrame::default();
+        let mut prov_frame = VisualizerProvenanceFrame::default();
         frame.description = format!("{:?}", current_thread_frame.current_source_info());
+        prov_frame.description = format!("{:?}", current_thread_frame.current_source_info());
+
         for (_idx, local) in current_thread_frame.locals.iter_enumerated() {
-            let Some(alloc_id) = (match local.as_mplace_or_imm() {
+            let Ok(alloc_id) = (match local.as_mplace_or_imm() {
                 Some(either::Either::Left((ptr, _mp))) =>
-                    ptr.provenance
+                    Ok(ptr
+                        .provenance
                         .as_ref()
                         .and_then(|p| {
                             (p as &dyn std::any::Any).downcast_ref::<crate::machine::Provenance>()
                         })
-                        .and_then(|p| p.get_alloc_id()),
-                Some(either::Either::Right(_imm)) => {
-                    None // TODO
-                }
-                None => None,
+                        .and_then(|p| p.get_alloc_id())
+                        .map(|id| vec![id])),
+                Some(either::Either::Right(imm)) =>
+                    match imm {
+                        Immediate::Scalar(scalar) =>
+                            match scalar {
+                                interpret::Scalar::Int(_) => Ok(None),
+                                interpret::Scalar::Ptr(p, _) =>
+                                    Ok((&(p.provenance) as &dyn std::any::Any)
+                                        .downcast_ref::<crate::machine::Provenance>()
+                                        .and_then(|p| p.get_alloc_id())
+                                        .map(|id| vec![id])),
+                            },
+                        Immediate::ScalarPair(scalar1, scalar2) => {
+                            let alloc_id_1 = match scalar1 {
+                                interpret::Scalar::Int(_) => None,
+                                interpret::Scalar::Ptr(p, _) =>
+                                    (&(p.provenance) as &dyn std::any::Any)
+                                        .downcast_ref::<crate::machine::Provenance>()
+                                        .and_then(|p| p.get_alloc_id()),
+                            };
+                            let alloc_id_2 = match scalar2 {
+                                interpret::Scalar::Int(_) => None,
+                                interpret::Scalar::Ptr(p, _) =>
+                                    (&(p.provenance) as &dyn std::any::Any)
+                                        .downcast_ref::<crate::machine::Provenance>()
+                                        .and_then(|p| p.get_alloc_id()),
+                            };
+
+                            Ok(Some(
+                                [alloc_id_1, alloc_id_2]
+                                    .into_iter()
+                                    .filter_map(|id| id)
+                                    .collect::<Vec<_>>(),
+                            )
+                            .filter(|v| !v.is_empty()))
+                        }
+                        Immediate::Uninit => Ok(None),
+                    },
+                None => Err("cannot convert to mplace_or_imm"),
             }) else {
                 info!("failed to get alloc id");
                 continue;
             };
-            let Some(ty_and_layout) = local.layout.get() else {
-                info!("failed to get TyAndLayout: is None");
+            let Some(alloc_id) = alloc_id else {
+                // No allocation needed to be handled
                 continue;
             };
-            let node_key = VisualizerNodeKey {
-                alloc_id: alloc_id.0.into(),
-                offset: 0,
-                ty: format!("{:?}", &ty_and_layout.ty),
-            };
-            frame.nodes.push(node_key);
+            for alloc_id in &alloc_id {
+                let Some(ty_and_layout) = local.layout.get() else {
+                    info!("failed to get TyAndLayout: is None");
+                    continue;
+                };
+                let node_key = VisualizerNodeKey {
+                    alloc_id: alloc_id.0.into(),
+                    offset: 0, // problem: this offset may not be 0 for scalar (non-mplace)? may need to compute offset?
+                    ty: format!("{:?}", &ty_and_layout.ty),
+                };
+                frame.nodes.push(node_key);
+                prov_frame.nodes.insert(alloc_id.0.get());
 
-            visualize(&mut data, None, ecx, alloc_id, 0, &ty_and_layout, None);
+                visualize(&mut data, None, ecx, *alloc_id, 0, &ty_and_layout, None);
+            }
         }
         data.add_frame(frame);
+        data.provenance_frames.push(prov_frame);
     }
 
     let counter = FILE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);

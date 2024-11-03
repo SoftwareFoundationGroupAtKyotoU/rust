@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import useSWR from "swr";
 
 export const RemoteFileSelectorDialog: React.FC<{
@@ -39,11 +39,13 @@ export const RemoteFileSelectorDialog: React.FC<{
     };
 
     const sortedFiles = useMemo(() => {
-        return remoteFilesData?.sort((file1, file2) => {
-            return (
-                (descending ? -1 : 1) * (file1[field] < file2[field] ? -1 : 1)
+        return remoteFilesData
+            ?.slice()
+            .sort(
+                (file1, file2) =>
+                    (descending ? -1 : 1) *
+                    (file1[field] < file2[field] ? -1 : 1)
             );
-        });
     }, [remoteFilesData, field, descending]);
 
     const filteredFiles = useMemo(() => {
@@ -87,7 +89,7 @@ export const RemoteFileSelectorDialog: React.FC<{
                         </b>
                     </div>
                     {filteredFiles?.slice(0, 500).map(({ filename, size }) => (
-                        <>
+                        <React.Fragment key={filename}>
                             <div
                                 className="cursor-pointer"
                                 onClick={() => openFile(filename)}
@@ -95,7 +97,7 @@ export const RemoteFileSelectorDialog: React.FC<{
                                 {filename}
                             </div>
                             <div>{size} bytes</div>
-                        </>
+                        </React.Fragment>
                     ))}
                     {filteredFiles !== undefined &&
                         filteredFiles.length > 500 && (

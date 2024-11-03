@@ -20,7 +20,7 @@ export const AllocEntryDisplay: React.FC<AllocEntryDisplayProps> = ({
     allocId,
     alloc,
 }) => {
-    const reachable = context?.reachableAllocIds.has(
+    const reachable = context?.reachableAllocIdByProvenance.has(
         +allocId as VisualizerAllocId
     );
     const leakedState = computeLeakedState(alloc.memory_kind, reachable);

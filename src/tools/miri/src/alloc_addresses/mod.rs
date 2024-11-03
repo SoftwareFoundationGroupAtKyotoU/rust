@@ -39,7 +39,7 @@ pub struct GlobalStateInner {
     /// `AllocExtra` because function pointers also have a base address, and
     /// they do not have an `AllocExtra`.
     /// This is the inverse of `int_to_ptr_map`.
-    base_addr: FxHashMap<AllocId, u64>,
+    pub base_addr: FxHashMap<AllocId, u64>,
     /// Temporarily store prepared memory space for global allocations the first time their memory
     /// address is required. This is used to ensure that the memory is allocated before Miri assigns
     /// it an internal address, which is important for matching the internal address to the machine
@@ -49,7 +49,7 @@ pub struct GlobalStateInner {
     reuse: ReusePool,
     /// Whether an allocation has been exposed or not. This cannot be put
     /// into `AllocExtra` for the same reason as `base_addr`.
-    exposed: FxHashSet<AllocId>,
+    pub exposed: FxHashSet<AllocId>,
     /// This is used as a memory address when a new pointer is casted to an integer. It
     /// is always larger than any address that was previously made part of a block.
     next_base_addr: u64,
@@ -450,8 +450,8 @@ impl<'tcx> MiriMachine<'tcx> {
             global_state.int_to_ptr_map.binary_search_by_key(&addr, |(addr, _)| *addr).unwrap();
         let removed = global_state.int_to_ptr_map.remove(pos);
         assert_eq!(removed, (addr, dead_id)); // double-check that we removed the right thing
-                                              // We can also remove it from `exposed`, since this allocation can anyway not be returned by
-                                              // `alloc_id_from_addr` any more.
+        // We can also remove it from `exposed`, since this allocation can anyway not be returned by
+        // `alloc_id_from_addr` any more.
         global_state.exposed.remove(&dead_id);
         // Also remember this address for future reuse.
         let thread = self.threads.active_thread();

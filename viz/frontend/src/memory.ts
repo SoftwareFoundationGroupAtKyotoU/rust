@@ -21,6 +21,8 @@ export const unleakableMemoryKinds: MemoryKind[] = [
     "Machine(Global)",
     "Machine(ExternStatic)",
     "Machine(Tls)",
+    // TODO: confirm how to handle this
+    "Machine(Runtime)",
 ];
 
 export const isMemoryKindLeakable = (kind: MemoryKind): boolean =>

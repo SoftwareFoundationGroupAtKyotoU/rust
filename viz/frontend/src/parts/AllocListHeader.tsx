@@ -18,19 +18,13 @@ export const AllocListHeader: React.FC<AllocListHeaderProps> = ({
     if (!context) {
         return <>Alloc list</>;
     }
-    const reachableAllocIds = new Set(
-        Object.keys(context.nodes)
-            .map((key) => deserializeKey(key as VisualizerNodeKeySerialized))
-            .map((key) => key.alloc_id)
-    );
-
     const leakedStatesCount = tally(
         Object.keys(context.allocs)
             .map((id) => +id as VisualizerAllocId)
             .map((id) =>
                 computeLeakedState(
                     context.allocs[id].memory_kind,
-                    reachableAllocIds.has(id)
+                    context.reachableAllocIdByProvenance.has(id)
                 )
             )
     );

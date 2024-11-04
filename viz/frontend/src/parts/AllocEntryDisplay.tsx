@@ -8,6 +8,7 @@ import {
     VisualizerContext,
 } from "../types";
 import { computeLeakedState, isMemoryKindLeakable } from "../memory";
+import { TextFold } from "../components/TextFold";
 
 type AllocEntryDisplayProps = {
     context: VisualizerContext;
@@ -46,6 +47,16 @@ export const AllocEntryDisplay: React.FC<AllocEntryDisplayProps> = ({
                     <span>bytes:</span>
                     <div>
                         <BytesDisplay bytes={alloc.bytes} />
+                    </div>
+                </div>
+                <div className="flex gap-[1ch]">
+                    <span>backtrace:</span>
+                    <div>
+                        {alloc.backtrace ? (
+                            <TextFold maxLength={50} text={alloc.backtrace} />
+                        ) : (
+                            "(none)"
+                        )}
                     </div>
                 </div>
             </Foldable>

@@ -50,6 +50,7 @@ struct VisualizerFrame {
 #[derive(Serialize, Debug, Clone)]
 struct VisualizerAlloc {
     memory_kind: String,
+    backtrace: Option<String>,
     bytes: Vec<u8>,
 }
 
@@ -61,13 +62,13 @@ struct VisualizerData {
     edges: HashSet<(VisualizerNodeKey, VisualizerNodeKey)>,
     frames: Vec<VisualizerFrame>,
     allocs: HashMap<u64, VisualizerAlloc>,
-    /// Map from AllocID to [AllocID]
-    provenance_static_roots: Vec<u64>,
+    provenance_static_roots: HashSet<u64>,
     /// AllocID containing wildcard provenance
     provenance_wildcard: HashSet<u64>,
     /// Exposed provenances
     provenance_exposed: HashSet<u64>,
     provenance_frames: Vec<VisualizerProvenanceFrame>,
+    /// Map from AllocID to [AllocID]
     #[serde_as(as = "Vec<(_, _)>")]
     provenance_graph: HashMap<u64, HashSet<u64>>,
 }
@@ -486,6 +487,7 @@ fn alloc_map_to_entry<'tcx>(
             .iter()
             .copied()
             .collect::<Vec<u8>>(),
+        backtrace: alloc.extra.backtrace.as_ref().map(|b| format!("{:#?}", b)),
     }))
 }
 
@@ -519,6 +521,15 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
     data.provenance_exposed =
         ecx.machine.alloc_addresses.borrow().exposed.iter().map(|id| id.0.get()).collect();
     data.provenance_static_roots = ecx.machine.static_roots.iter().map(|a| a.0.get()).collect();
+
+    for (_, ptr) in &ecx.machine.threads.thread_local_allocs {
+        match ptr.provenance {
+            crate::Provenance::Concrete { alloc_id, tag: _ } => {
+                data.provenance_static_roots.insert(alloc_id.0.get());
+            }
+            _ => {}
+        }
+    }
 
     for current_thread_frame in ecx.active_thread_stack() {
         let mut frame = VisualizerFrame::default();

@@ -458,7 +458,7 @@ pub struct ThreadManager<'tcx> {
     /// Note that this vector also contains terminated threads.
     threads: IndexVec<ThreadId, Thread<'tcx>>,
     /// A mapping from a thread-local static to the thread specific allocation.
-    thread_local_allocs: FxHashMap<(DefId, ThreadId), StrictPointer>,
+    pub thread_local_allocs: FxHashMap<(DefId, ThreadId), StrictPointer>,
     /// A flag that indicates that we should change the active thread.
     yield_active_thread: bool,
 }

@@ -21,6 +21,7 @@ export type VisualizerFrame = {
 
 export type VisualizerAlloc = {
     memory_kind: MemoryKind;
+    backtrace?: string;
     bytes: number[];
 };
 

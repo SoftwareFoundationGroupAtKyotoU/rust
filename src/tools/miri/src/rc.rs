@@ -1,8 +1,10 @@
 #![allow(dead_code, unused_variables, unused_imports)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
+use std::sync::Mutex;
 
+use once_cell::sync::Lazy;
 use rustc_index::IndexVec;
 use rustc_middle::ty::TyKind;
 use rustc_middle::ty::layout::TyAndLayout;
@@ -48,6 +50,8 @@ struct VisualizerData {
 
 static FILE_COUNTER: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
+static GLOBAL_IGNORE_SET: Lazy<Mutex<HashSet<u64>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+
 fn alloc_map_to_entry<'tcx>(
     alloc_id: &AllocId,
     (memory_kind, alloc): &(MemoryKind, Allocation<Provenance, AllocExtra<'tcx>, MiriAllocBytes>),
@@ -62,6 +66,27 @@ fn alloc_map_to_entry<'tcx>(
             .collect::<Vec<u8>>(),
         backtrace: alloc.extra.backtrace.as_ref().map(|b| format!("{:#?}", b)),
     }))
+}
+
+fn is_memory_kind_leakable(kind: &str) -> bool {
+    // TODO: confirm how to handle Machine(Runtime)
+    return kind == "Machine(Machine)"
+        || kind == "Machine(Global)"
+        || kind == "Machine(ExternStatic)"
+        || kind == "Machine(Tls)"
+        || kind == "Machine(Runtime)";
+}
+
+fn report_leak<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>, alloc_id: u64) {
+    println!("Alloc {alloc_id} has leaked");
+    for frame in ecx.active_thread_stack().iter().rev() {
+        if let Some(source_info) = frame.current_source_info() {
+            println!("  in {:?}", source_info.span);
+        } else {
+            println!("  in (unknown)")
+        }
+    }
+    println!("");
 }
 
 pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
@@ -89,8 +114,6 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
         }
     });
 
-    println!("static roots: {:?}", &ecx.machine.static_roots);
-
     data.provenance_exposed =
         ecx.machine.alloc_addresses.borrow().exposed.iter().map(|id| id.0.get()).collect();
     data.provenance_static_roots = ecx.machine.static_roots.iter().map(|a| a.0.get()).collect();
@@ -109,26 +132,25 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
         prov_frame.description = format!("{:?}", current_thread_frame.current_source_info());
 
         for (_idx, local) in current_thread_frame.locals.iter_enumerated() {
-            let Ok(alloc_id) = (match local.as_mplace_or_imm() {
+            let Some(alloc_ids) = (match local.as_mplace_or_imm() {
                 Some(either::Either::Left((ptr, _mp))) =>
-                    Ok(ptr
-                        .provenance
+                    ptr.provenance
                         .as_ref()
                         .and_then(|p| {
                             (p as &dyn std::any::Any).downcast_ref::<crate::machine::Provenance>()
                         })
                         .and_then(|p| p.get_alloc_id())
-                        .map(|id| vec![id])),
+                        .map(|id| vec![id]),
                 Some(either::Either::Right(imm)) =>
                     match imm {
                         Immediate::Scalar(scalar) =>
                             match scalar {
-                                interpret::Scalar::Int(_) => Ok(None),
+                                interpret::Scalar::Int(_) => None,
                                 interpret::Scalar::Ptr(p, _) =>
-                                    Ok((&(p.provenance) as &dyn std::any::Any)
+                                    (&(p.provenance) as &dyn std::any::Any)
                                         .downcast_ref::<crate::machine::Provenance>()
                                         .and_then(|p| p.get_alloc_id())
-                                        .map(|id| vec![id])),
+                                        .map(|id| vec![id]),
                             },
                         Immediate::ScalarPair(scalar1, scalar2) => {
                             let alloc_id_1 = match scalar1 {
@@ -146,26 +168,21 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
                                         .and_then(|p| p.get_alloc_id()),
                             };
 
-                            Ok(Some(
+                            Some(
                                 [alloc_id_1, alloc_id_2]
                                     .into_iter()
                                     .filter_map(|id| id)
                                     .collect::<Vec<_>>(),
                             )
-                            .filter(|v| !v.is_empty()))
+                            .filter(|v| !v.is_empty())
                         }
-                        Immediate::Uninit => Ok(None),
+                        Immediate::Uninit => None,
                     },
-                None => Err("cannot convert to mplace_or_imm"),
+                None => None,
             }) else {
-                info!("failed to get alloc id");
                 continue;
             };
-            let Some(alloc_id) = alloc_id else {
-                // No allocation needed to be handled
-                continue;
-            };
-            for alloc_id in &alloc_id {
+            for alloc_id in &alloc_ids {
                 prov_frame.nodes.insert(alloc_id.0.get());
             }
         }
@@ -173,6 +190,39 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
     }
 
     let counter = FILE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    let mut reachable_set: HashSet<u64> = HashSet::new();
+    reachable_set.extend(data.provenance_static_roots.iter().copied());
+    for frame in &data.provenance_frames {
+        reachable_set.extend(frame.nodes.iter().copied());
+    }
+
+    {
+        let mut queue: VecDeque<u64> = reachable_set.iter().copied().collect();
+        while let Some(parent) = queue.pop_front() {
+            if let Some(children) = data.provenance_graph.get(&parent) {
+                for child in children {
+                    if !reachable_set.contains(child) {
+                        reachable_set.insert(*child);
+                        queue.push_back(*child);
+                    }
+                }
+            }
+        }
+    }
+
+    {
+        let mut ignore_set = GLOBAL_IGNORE_SET.lock().unwrap();
+        for (alloc_id, alloc) in &data.allocs {
+            if !is_memory_kind_leakable(&alloc.memory_kind)
+                && !reachable_set.contains(alloc_id)
+                && !ignore_set.contains(alloc_id)
+            {
+                report_leak(ecx, *alloc_id);
+                ignore_set.insert(*alloc_id);
+            }
+        }
+    }
 
     use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};

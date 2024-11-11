@@ -7,7 +7,7 @@ import {
     VisualizerAllocId,
     VisualizerContext,
 } from "../types";
-import { computeLeakedState, isMemoryKindLeakable } from "../memory";
+import { computeLeakedState } from "../memory";
 import { TextFold } from "../components/TextFold";
 
 type AllocEntryDisplayProps = {

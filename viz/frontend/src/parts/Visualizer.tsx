@@ -1,7 +1,6 @@
 import React from "react";
 import { Foldable } from "../components/Foldable";
 import { VisualizerAllocId, VisualizerContext } from "../types";
-import { AllocGraph } from "./AllocGraph";
 import { AllocListHeader } from "./AllocListHeader";
 import { AllocEntryDisplay } from "./AllocEntryDisplay";
 import { ProvenanceAllocGraph } from "./ProvenanceAllocGraph";
@@ -22,21 +21,6 @@ export const Visualizer: React.FC<VisualizerProps> = ({ context }) => {
                             alloc={alloc}
                             context={context}
                         />
-                    ))}
-                </div>
-            </Foldable>
-            <Foldable header={<>Alloc graph</>} defaultFolded>
-                <div>
-                    {context.frames.map((frame) => (
-                        <Foldable header={<>frame {frame.description}</>}>
-                            {frame.nodes.map((node) => (
-                                <AllocGraph
-                                    nodeKey={node}
-                                    context={context}
-                                    ancestors={[]}
-                                />
-                            ))}
-                        </Foldable>
                     ))}
                 </div>
             </Foldable>

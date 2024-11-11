@@ -1,10 +1,5 @@
 import React from "react";
-import {
-    deserializeKey,
-    VisualizerAllocId,
-    VisualizerContext,
-    VisualizerNodeKeySerialized,
-} from "../types";
+import { VisualizerAllocId, VisualizerContext } from "../types";
 import { computeLeakedState } from "../memory";
 import { tally } from "../utils";
 

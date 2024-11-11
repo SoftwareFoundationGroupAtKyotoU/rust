@@ -476,7 +476,7 @@ pub fn eval_entry<'tcx>(
             return None;
         }
         // Check for memory leaks.
-        info!("Additional static roots: {:?}", ecx.machine.static_roots);
+        // info!("Additional static roots: {:?}", ecx.machine.static_roots);
         let leaks = ecx.take_leaked_allocations(|ecx| &ecx.machine.static_roots);
         if !leaks.is_empty() {
             report_leaks(&ecx, leaks);

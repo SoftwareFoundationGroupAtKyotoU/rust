@@ -252,12 +252,12 @@ impl GlobalStateInner {
         kind: MemoryKind,
         machine: &MiriMachine<'_>,
     ) -> AllocState {
-        info!(
-            "new_allocation(id = {id:?}, alloc_size = {alloc_size:?}, kind = {kind:?}, machine = <machine>)",
-            id = id,
-            alloc_size = alloc_size,
-            kind = kind,
-        );
+        // info!(
+        //     "new_allocation(id = {id:?}, alloc_size = {alloc_size:?}, kind = {kind:?}, machine = <machine>)",
+        //     id = id,
+        //     alloc_size = alloc_size,
+        //     kind = kind,
+        // );
         match self.borrow_tracker_method {
             BorrowTrackerMethod::StackedBorrows =>
                 AllocState::StackedBorrows(Box::new(RefCell::new(Stacks::new_allocation(
@@ -429,12 +429,12 @@ impl AllocState {
         range: AllocRange,
         machine: &MiriMachine<'tcx>,
     ) -> InterpResult<'tcx> {
-        info!(
-            "before_memory_read(alloc_id = {alloc_id:?}, prov_extra = {prov_extra:?}, range = {range:?})",
-            alloc_id = alloc_id,
-            prov_extra = prov_extra,
-            range = range,
-        );
+        // info!(
+        //     "before_memory_read(alloc_id = {alloc_id:?}, prov_extra = {prov_extra:?}, range = {range:?})",
+        //     alloc_id = alloc_id,
+        //     prov_extra = prov_extra,
+        //     range = range,
+        // );
         match self {
             AllocState::StackedBorrows(sb) =>
                 sb.borrow_mut().before_memory_read(alloc_id, prov_extra, range, machine),
@@ -456,12 +456,12 @@ impl AllocState {
         range: AllocRange,
         machine: &MiriMachine<'tcx>,
     ) -> InterpResult<'tcx> {
-        info!(
-            "before_memory_write(alloc_id = {alloc_id:?}, prov_extra = {prov_extra:?}, range = {range:?})",
-            alloc_id = alloc_id,
-            prov_extra = prov_extra,
-            range = range,
-        );
+        // info!(
+        //     "before_memory_write(alloc_id = {alloc_id:?}, prov_extra = {prov_extra:?}, range = {range:?})",
+        //     alloc_id = alloc_id,
+        //     prov_extra = prov_extra,
+        //     range = range,
+        // );
         match self {
             AllocState::StackedBorrows(sb) =>
                 sb.get_mut().before_memory_write(alloc_id, prov_extra, range, machine),
@@ -483,12 +483,12 @@ impl AllocState {
         size: Size,
         machine: &MiriMachine<'tcx>,
     ) -> InterpResult<'tcx> {
-        info!(
-            "before_memory_deallocation(alloc_id = {alloc_id:?}, prov_extra = {prov_extra:?}, size = {size:?})",
-            alloc_id = alloc_id,
-            prov_extra = prov_extra,
-            size = size,
-        );
+        // info!(
+        //     "before_memory_deallocation(alloc_id = {alloc_id:?}, prov_extra = {prov_extra:?}, size = {size:?})",
+        //     alloc_id = alloc_id,
+        //     prov_extra = prov_extra,
+        //     size = size,
+        // );
         match self {
             AllocState::StackedBorrows(sb) =>
                 sb.get_mut().before_memory_deallocation(alloc_id, prov_extra, size, machine),

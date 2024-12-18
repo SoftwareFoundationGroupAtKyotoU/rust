@@ -23,7 +23,7 @@ pub struct Stack {
     /// Invariants:
     /// * Above a `SharedReadOnly` there can only be more `SharedReadOnly`.
     /// * Except for `Untagged`, no tag occurs in the stack more than once.
-    borrows: Vec<Item>,
+    pub borrows: Vec<Item>,
     /// If this is `Some(id)`, then the actual current stack is unknown. This can happen when
     /// wildcard pointers are used to access this location. What we do know is that `borrows` are at
     /// the top of the stack, and below it are arbitrarily many items whose `tag` is strictly less

@@ -17,11 +17,11 @@ use super::{AllocError, AllocRange, AllocResult, CtfeProvenance, Provenance, all
 pub struct ProvenanceMap<Prov = CtfeProvenance> {
     /// `Provenance` in this map applies from the given offset for an entire pointer-size worth of
     /// bytes. Two entries in this map are always at least a pointer size apart.
-    ptrs: SortedMap<Size, Prov>,
+    pub ptrs: SortedMap<Size, Prov>,
     /// Provenance in this map only applies to the given single byte.
     /// This map is disjoint from the previous. It will always be empty when
     /// `Prov::OFFSET_IS_ADDR` is false.
-    bytes: Option<Box<SortedMap<Size, Prov>>>,
+    pub bytes: Option<Box<SortedMap<Size, Prov>>>,
 }
 
 // These impls are generic over `Prov` since `CtfeProvenance` is only decodable/encodable

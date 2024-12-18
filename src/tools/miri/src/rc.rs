@@ -2,12 +2,14 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
+use std::ops::Range;
 use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
 use rustc_index::IndexVec;
 use rustc_middle::ty::TyKind;
 use rustc_middle::ty::layout::TyAndLayout;
+use rustc_span::sym::dealloc;
 use rustc_target::abi::{FieldIdx, FieldsShape, Integer, Primitive, Scalar, Size, Variants};
 use serde::Serialize;
 
@@ -79,68 +81,66 @@ fn is_memory_kind_leakable(kind: &str) -> bool {
 
 fn report_leak<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>, alloc_id: u64) {
     println!("Alloc {alloc_id} has leaked");
+    let alloc = ecx.memory.alloc_map().get(AllocId(alloc_id.try_into().unwrap()));
+    println!("  allocated");
+    if let Some((memory_kind, alloc)) = alloc {
+        let sb = alloc.extra.borrow_tracker_sb().borrow();
+        // println!("{:?}", sb);
+
+        if let Some(backtrace) = &alloc.extra.backtrace {
+            for frame in backtrace {
+                println!("    in {:?}", frame.span);
+            }
+        }
+    }
+    println!("  lost");
     for frame in ecx.active_thread_stack().iter().rev() {
         if let Some(source_info) = frame.current_source_info() {
-            println!("  in {:?}", source_info.span);
+            println!("    in {:?}", source_info.span);
         } else {
-            println!("  in (unknown)")
+            println!("    in (unknown)")
         }
     }
     println!("");
 }
 
 pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
-    let mut data = VisualizerData::default();
+    let mut provenance_root_tags: Vec<u64> = vec![];
+    let mut leakable_alloc_ids = HashSet::<u64>::new();
 
-    data.allocs =
-        ecx.memory.alloc_map().filter_map_collect(alloc_map_to_entry).into_iter().collect();
-
-    // Fill provenance-graph related fields
-    ecx.memory.alloc_map().iter(|it| {
-        for (alloc_id, (kind, alloc)) in it {
-            for prov in alloc.provenance().provenances() {
-                match prov {
-                    crate::Provenance::Concrete { alloc_id: prov_alloc_id, tag } => {
-                        data.provenance_graph
-                            .entry(alloc_id.0.get())
-                            .or_default()
-                            .insert(prov_alloc_id.0.get());
-                    }
-                    crate::Provenance::Wildcard => {
-                        data.provenance_wildcard.insert(alloc_id.0.get());
-                    }
+    for alloc_id in ecx.machine.static_roots.iter().cloned() {
+        leakable_alloc_ids.insert(alloc_id.0.into());
+        if let Some((_, alloc)) = ecx.memory.alloc_map().get(alloc_id) {
+            for tag in alloc.provenance().provenances() {
+                if let crate::Provenance::Concrete { tag, .. } = tag {
+                    provenance_root_tags.push(tag.get());
                 }
             }
         }
-    });
-
-    data.provenance_exposed =
-        ecx.machine.alloc_addresses.borrow().exposed.iter().map(|id| id.0.get()).collect();
-    data.provenance_static_roots = ecx.machine.static_roots.iter().map(|a| a.0.get()).collect();
+    }
 
     for (_, ptr) in &ecx.machine.threads.thread_local_allocs {
         match ptr.provenance {
-            crate::Provenance::Concrete { alloc_id, tag: _ } => {
-                data.provenance_static_roots.insert(alloc_id.0.get());
+            crate::Provenance::Concrete { tag, alloc_id } => {
+                provenance_root_tags.push(tag.get());
+                // // note: the following line seems to be not needed because `tag` should be able to dealloc the alloc
+                // leakable_alloc_ids.insert(alloc_id.0.into());
             }
             _ => {}
         }
     }
 
+    let mut local_tags = vec![];
     for current_thread_frame in ecx.active_thread_stack() {
-        let mut prov_frame = VisualizerProvenanceFrame::default();
-        prov_frame.description = format!("{:?}", current_thread_frame.current_source_info());
-
         for (_idx, local) in current_thread_frame.locals.iter_enumerated() {
-            let Some(alloc_ids) = (match local.as_mplace_or_imm() {
+            let Some(provenances) = (match local.as_mplace_or_imm() {
                 Some(either::Either::Left((ptr, _mp))) =>
                     ptr.provenance
                         .as_ref()
                         .and_then(|p| {
                             (p as &dyn std::any::Any).downcast_ref::<crate::machine::Provenance>()
                         })
-                        .and_then(|p| p.get_alloc_id())
-                        .map(|id| vec![id]),
+                        .map(|p| vec![p.clone()]),
                 Some(either::Either::Right(imm)) =>
                     match imm {
                         Immediate::Scalar(scalar) =>
@@ -149,32 +149,26 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
                                 interpret::Scalar::Ptr(p, _) =>
                                     (&(p.provenance) as &dyn std::any::Any)
                                         .downcast_ref::<crate::machine::Provenance>()
-                                        .and_then(|p| p.get_alloc_id())
-                                        .map(|id| vec![id]),
+                                        .map(|p| vec![p.clone()]),
                             },
                         Immediate::ScalarPair(scalar1, scalar2) => {
-                            let alloc_id_1 = match scalar1 {
+                            let prov_1 = match scalar1 {
                                 interpret::Scalar::Int(_) => None,
                                 interpret::Scalar::Ptr(p, _) =>
                                     (&(p.provenance) as &dyn std::any::Any)
                                         .downcast_ref::<crate::machine::Provenance>()
-                                        .and_then(|p| p.get_alloc_id()),
+                                        .cloned(),
                             };
-                            let alloc_id_2 = match scalar2 {
+                            let prov_2 = match scalar2 {
                                 interpret::Scalar::Int(_) => None,
                                 interpret::Scalar::Ptr(p, _) =>
                                     (&(p.provenance) as &dyn std::any::Any)
                                         .downcast_ref::<crate::machine::Provenance>()
-                                        .and_then(|p| p.get_alloc_id()),
+                                        .cloned(),
                             };
 
-                            Some(
-                                [alloc_id_1, alloc_id_2]
-                                    .into_iter()
-                                    .filter_map(|id| id)
-                                    .collect::<Vec<_>>(),
-                            )
-                            .filter(|v| !v.is_empty())
+                            Some([prov_1, prov_2].into_iter().filter_map(|p| p).collect::<Vec<_>>())
+                                .filter(|v| !v.is_empty())
                         }
                         Immediate::Uninit => None,
                     },
@@ -182,55 +176,138 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
             }) else {
                 continue;
             };
-            for alloc_id in &alloc_ids {
-                prov_frame.nodes.insert(alloc_id.0.get());
-            }
-        }
-        data.provenance_frames.push(prov_frame);
-    }
 
-    let counter = FILE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-    let mut reachable_set: HashSet<u64> = HashSet::new();
-    reachable_set.extend(data.provenance_static_roots.iter().copied());
-    for frame in &data.provenance_frames {
-        reachable_set.extend(frame.nodes.iter().copied());
-    }
-
-    {
-        let mut queue: VecDeque<u64> = reachable_set.iter().copied().collect();
-        while let Some(parent) = queue.pop_front() {
-            if let Some(children) = data.provenance_graph.get(&parent) {
-                for child in children {
-                    if !reachable_set.contains(child) {
-                        reachable_set.insert(*child);
-                        queue.push_back(*child);
-                    }
+            for prov in &provenances {
+                if let crate::machine::Provenance::Concrete { tag, .. } = prov {
+                    local_tags.push(tag.clone());
                 }
             }
         }
     }
 
-    {
-        let mut ignore_set = GLOBAL_IGNORE_SET.lock().unwrap();
-        for (alloc_id, alloc) in &data.allocs {
-            if !is_memory_kind_leakable(&alloc.memory_kind)
-                && !reachable_set.contains(alloc_id)
-                && !ignore_set.contains(alloc_id)
-            {
-                report_leak(ecx, *alloc_id);
-                ignore_set.insert(*alloc_id);
+    let mut tag_to_readable_bytes: HashMap<u64, Vec<Range<u64>>> = HashMap::new();
+    let mut byte_to_tag: HashMap<u64, u64> = HashMap::new();
+
+    ecx.memory.alloc_map().iter(|it| {
+        for (alloc_id, (memory_kind, alloc)) in it {
+            let sb = alloc.extra.borrow_tracker_sb().borrow();
+            let global_state = ecx.machine.alloc_addresses.borrow();
+            let base_addr = global_state.base_addr[alloc_id];
+            // note: this range is relative to alloc (e.g. 0 -> start of alloc) so we need to offset it
+            for (range, stack) in sb.stacks.iter_all() {
+                let range = range.start + base_addr..range.end + base_addr;
+                for item in &stack.borrows {
+                    if item.perm() != Permission::Disabled {
+                        tag_to_readable_bytes
+                            .entry(item.tag().get())
+                            .or_default()
+                            .push(range.clone());
+                    }
+                }
             }
+
+            let pointer_size = 8; // TODO extract the information from correct source
+            let provenance = alloc.provenance();
+            for (size, prov) in provenance.ptrs.iter() {
+                if let crate::machine::Provenance::Concrete { tag, .. } = prov {
+                    let ptr_base_addr = base_addr + size.bytes();
+                    for addr in ptr_base_addr..ptr_base_addr + pointer_size {
+                        byte_to_tag.insert(addr, tag.get());
+                    }
+                }
+            }
+            if let Some(bytes) = &provenance.bytes {
+                for (size, prov) in bytes.iter() {
+                    let byte_base_addr = base_addr + size.bytes();
+                    if let crate::machine::Provenance::Concrete { tag, .. } = prov {
+                        byte_to_tag.insert(byte_base_addr, tag.get());
+                    }
+                }
+            }
+        }
+    });
+
+    let mut visited_tags = HashSet::<u64>::new();
+    let mut visited_bytes = HashSet::<u64>::new();
+
+    let mut queue_tags = VecDeque::<u64>::new();
+    let mut queue_bytes = VecDeque::<u64>::new();
+
+    for tag in provenance_root_tags.iter().copied().chain(local_tags.iter().map(|t| t.get())) {
+        queue_tags.push_back(tag);
+    }
+
+    // TODO: handle cases where only part of the pointer can be read
+    loop {
+        while let Some(tag) = queue_tags.pop_front() {
+            if visited_tags.contains(&tag) {
+                continue;
+            }
+            visited_tags.insert(tag);
+            if let Some(byte_ranges) = tag_to_readable_bytes.get(&tag) {
+                for byte_range in byte_ranges {
+                    for byte in byte_range.clone() {
+                        queue_bytes.push_back(byte);
+                    }
+                }
+            }
+        }
+
+        while let Some(byte) = queue_bytes.pop_front() {
+            if visited_bytes.contains(&byte) {
+                continue;
+            }
+            visited_bytes.insert(byte);
+            if let Some(tag) = byte_to_tag.get(&byte) {
+                queue_tags.push_back(*tag);
+            }
+        }
+
+        if queue_tags.is_empty() && queue_bytes.is_empty() {
+            break;
         }
     }
 
-    use std::io::Write;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    ecx.memory.alloc_map().iter(|it| {
+        for (alloc_id, (memory_kind, alloc)) in it {
+            let memory_kind_str = format!("{memory_kind:?}");
+            if is_memory_kind_leakable(&memory_kind_str)
+                || leakable_alloc_ids.contains(&alloc_id.0.into())
+            {
+                continue;
+            }
 
-    let now = SystemTime::now();
-    let timestamp = now.duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis();
-    let new_file_path = format!(".local/dumps/data_{timestamp}_{counter:06}.json");
-    let mut file_new = std::fs::File::create(&new_file_path).unwrap();
-    let json = serde_json::to_string(&data).unwrap();
-    file_new.write_all(json.as_bytes()).unwrap();
+            if alloc.bytes.layout.size() == 0 {
+                continue;
+            }
+            let sb = alloc.extra.borrow_tracker_sb().borrow();
+            // note: this range is relative to alloc (e.g. 0 -> start of alloc) so we need to offset it
+            let mut intersected: Option<HashSet<u64>> = None;
+            for (range, stack) in sb.stacks.iter_all() {
+                let mut deallocatable_set = HashSet::<u64>::new();
+                for borrow in &stack.borrows {
+                    if matches!(borrow.perm(), Permission::SharedReadWrite | Permission::Unique) {
+                        deallocatable_set.insert(borrow.tag().get());
+                    }
+                }
+                if let Some(intersected) = &mut intersected {
+                    *intersected = intersected.intersection(&deallocatable_set).copied().collect();
+                } else {
+                    intersected = Some(deallocatable_set);
+                }
+            }
+            let Some(intersected) = intersected else {
+                panic!("Unexpected empty intersection result for non-zero sized alloc");
+            };
+            if intersected.iter().all(|deallocatable_tag| !visited_tags.contains(deallocatable_tag))
+            {
+                // println!("Alloc {alloc_id:?} has surely leaked");
+                let mut ignore_set = GLOBAL_IGNORE_SET.lock().unwrap();
+                if !ignore_set.contains(&(alloc_id.0.into())) {
+                    report_leak(ecx, alloc_id.0.into());
+                    ignore_set.insert(alloc_id.0.into());
+                }
+            }
+        }
+    });
 }

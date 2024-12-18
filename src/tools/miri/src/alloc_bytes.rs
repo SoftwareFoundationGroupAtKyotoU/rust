@@ -10,7 +10,7 @@ use rustc_target::abi::{Align, Size};
 #[derive(Debug)]
 pub struct MiriAllocBytes {
     /// Stored layout information about the allocation.
-    layout: alloc::Layout,
+    pub layout: alloc::Layout,
     /// Pointer to the allocation contents.
     /// Invariant:
     /// * If `self.layout.size() == 0`, then `self.ptr` was allocated with the equivalent layout with size 1.

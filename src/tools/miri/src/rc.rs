@@ -219,6 +219,10 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
 
     ecx.memory.alloc_map().iter(|it| {
         for (alloc_id, (memory_kind, alloc)) in it {
+            if ecx.memory.dead_alloc_map.contains_key(alloc_id) {
+                continue;
+            }
+
             let memory_kind_str = format!("{memory_kind:?}");
             if is_memory_kind_leakable(&memory_kind_str)
                 || leakable_alloc_ids.contains(&alloc_id.0.into())

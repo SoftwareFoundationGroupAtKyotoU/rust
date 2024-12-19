@@ -112,7 +112,7 @@ pub struct Memory<'tcx, M: Machine<'tcx>> {
     /// to ZSTs (where pointers may dangle), we keep track of the size even for allocations
     /// that do not exist any more.
     // FIXME: this should not be public, but interning currently needs access to it
-    pub(super) dead_alloc_map: FxIndexMap<AllocId, (Size, Align)>,
+    pub dead_alloc_map: FxIndexMap<AllocId, (Size, Align)>,
 
     /// This stores whether we are currently doing reads purely for the purpose of validation.
     /// Those reads do not trigger the machine's hooks for memory reads.

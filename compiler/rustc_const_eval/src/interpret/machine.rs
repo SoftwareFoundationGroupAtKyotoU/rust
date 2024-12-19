@@ -426,6 +426,11 @@ pub trait Machine<'tcx>: Sized {
         interp_ok(())
     }
 
+    #[inline(always)]
+    fn trigger_leak_check(_ecx: &InterpCx<'tcx, Self>) -> InterpResult<'tcx> {
+        interp_ok(())
+    }
+
     /// Hook for performing extra checks on any memory read access,
     /// that involves an allocation, even ZST reads.
     ///

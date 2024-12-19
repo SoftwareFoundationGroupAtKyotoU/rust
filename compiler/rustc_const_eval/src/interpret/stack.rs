@@ -584,6 +584,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
             );
             self.deallocate_ptr(ptr, None, MemoryKind::Stack)?;
         };
+        // M::trigger_leak_check(self)?;
         interp_ok(())
     }
 

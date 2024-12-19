@@ -493,6 +493,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
     /// Jump to the given block.
     #[inline]
     pub fn go_to_block(&mut self, target: mir::BasicBlock) {
+        M::trigger_leak_check(self).unwrap();
         self.frame_mut().loc = Left(mir::Location { block: target, statement_index: 0 });
     }
 

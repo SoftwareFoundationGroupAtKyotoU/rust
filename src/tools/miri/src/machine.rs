@@ -1577,6 +1577,12 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         res
     }
 
+    #[inline(always)]
+    fn trigger_leak_check(ecx: &InterpCx<'tcx, Self>) -> InterpResult<'tcx> {
+        crate::rc::rc_test(ecx);
+        interp_ok(())
+    }
+
     fn after_local_read(ecx: &InterpCx<'tcx, Self>, local: mir::Local) -> InterpResult<'tcx> {
         if let Some(data_race) = &ecx.frame().extra.data_race {
             data_race.local_read(local, &ecx.machine);

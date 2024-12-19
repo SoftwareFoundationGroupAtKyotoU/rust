@@ -132,7 +132,8 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
     }
 
     let mut tag_to_readable_bytes: HashMap<u64, Vec<Range<u64>>> = HashMap::new();
-    let mut byte_to_tag: HashMap<u64, u64> = HashMap::new();
+    // Required range to read the tag
+    let mut byte_to_tag: HashMap<u64, (Range<u64>, u64)> = HashMap::new();
 
     ecx.memory.alloc_map().iter(|it| {
         for (alloc_id, (memory_kind, alloc)) in it {
@@ -157,27 +158,34 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
             for (size, prov) in provenance.ptrs.iter() {
                 if let crate::machine::Provenance::Concrete { tag, .. } = prov {
                     let ptr_base_addr = base_addr + size.bytes();
-                    for addr in ptr_base_addr..ptr_base_addr + pointer_size {
-                        byte_to_tag.insert(addr, tag.get());
-                    }
+                    byte_to_tag.insert(
+                        ptr_base_addr,
+                        (ptr_base_addr..ptr_base_addr + pointer_size, tag.get()),
+                    );
                 }
             }
             if let Some(bytes) = &provenance.bytes {
                 for (size, prov) in bytes.iter() {
                     let byte_base_addr = base_addr + size.bytes();
                     if let crate::machine::Provenance::Concrete { tag, .. } = prov {
-                        byte_to_tag.insert(byte_base_addr, tag.get());
+                        byte_to_tag.insert(
+                            byte_base_addr,
+                            ((byte_base_addr..byte_base_addr + 1), tag.get()),
+                        );
                     }
                 }
             }
         }
     });
 
+    // TODO: make sure invariant that tag_to_readable_bytes is maximally compacted (i.e. all adjacent ranges are combined)
+    //       should be guaranteed by stacked borrows stack
+
     let mut visited_tags = HashSet::<u64>::new();
-    let mut visited_bytes = HashSet::<u64>::new();
+    let mut visited_byte_ranges = HashSet::<Range<u64>>::new();
 
     let mut queue_tags = VecDeque::<u64>::new();
-    let mut queue_bytes = VecDeque::<u64>::new();
+    let mut queue_byte_ranges = VecDeque::<Range<u64>>::new();
 
     for tag in provenance_root_tags.iter().copied().chain(local_tags.iter().map(|t| t.get())) {
         queue_tags.push_back(tag);
@@ -192,24 +200,29 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
             visited_tags.insert(tag);
             if let Some(byte_ranges) = tag_to_readable_bytes.get(&tag) {
                 for byte_range in byte_ranges {
-                    for byte in byte_range.clone() {
-                        queue_bytes.push_back(byte);
+                    queue_byte_ranges.push_back(byte_range.clone());
+                }
+            }
+        }
+
+        while let Some(byte_range) = queue_byte_ranges.pop_front() {
+            if visited_byte_ranges.contains(&byte_range) {
+                continue;
+            }
+            visited_byte_ranges.insert(byte_range.clone());
+            for byte in byte_range.clone() {
+                if let Some((required, tag)) = byte_to_tag.get(&byte) {
+                    if byte_range.start <= required.start
+                        && required.end <= byte_range.end
+                        && !visited_tags.contains(tag)
+                    {
+                        queue_tags.push_back(*tag);
                     }
                 }
             }
         }
 
-        while let Some(byte) = queue_bytes.pop_front() {
-            if visited_bytes.contains(&byte) {
-                continue;
-            }
-            visited_bytes.insert(byte);
-            if let Some(tag) = byte_to_tag.get(&byte) {
-                queue_tags.push_back(*tag);
-            }
-        }
-
-        if queue_tags.is_empty() && queue_bytes.is_empty() {
+        if queue_tags.is_empty() && queue_byte_ranges.is_empty() {
             break;
         }
     }

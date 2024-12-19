@@ -1,20 +1,10 @@
-#![allow(dead_code, unused_variables, unused_imports)]
-
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::hash::Hash;
 use std::ops::Range;
 use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
-use rustc_index::IndexVec;
-use rustc_middle::ty::TyKind;
-use rustc_middle::ty::layout::TyAndLayout;
-use rustc_span::sym::dealloc;
-use rustc_target::abi::{FieldIdx, FieldsShape, Integer, Primitive, Scalar, Size, Variants};
-use serde::Serialize;
 
-use crate::rustc_middle::ty::layout::{LayoutOf, MaybeResult};
-use crate::{MemoryKind, Provenance, *};
+use crate::*;
 
 static GLOBAL_IGNORE_SET: Lazy<Mutex<HashSet<u64>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
@@ -31,7 +21,7 @@ fn report_leak<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>, alloc_id: u64) {
     println!("Alloc {alloc_id} has leaked");
     let alloc = ecx.memory.alloc_map().get(AllocId(alloc_id.try_into().unwrap()));
     println!("  allocated");
-    if let Some((memory_kind, alloc)) = alloc {
+    if let Some((_, alloc)) = alloc {
         if let Some(backtrace) = &alloc.extra.backtrace {
             for frame in backtrace {
                 println!("    in {:?}", frame.span);
@@ -108,7 +98,7 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
 
     for (_, ptr) in &ecx.machine.threads.thread_local_allocs {
         match ptr.provenance {
-            crate::Provenance::Concrete { tag, alloc_id } => {
+            crate::Provenance::Concrete { tag, .. } => {
                 provenance_root_tags.push(tag.get());
             }
             _ => {}
@@ -136,7 +126,7 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
     let mut byte_to_tag: HashMap<u64, (Range<u64>, u64)> = HashMap::new();
 
     ecx.memory.alloc_map().iter(|it| {
-        for (alloc_id, (memory_kind, alloc)) in it {
+        for (alloc_id, (_, alloc)) in it {
             let sb = alloc.extra.borrow_tracker_sb().borrow();
             let global_state = ecx.machine.alloc_addresses.borrow();
             let base_addr = global_state.base_addr[alloc_id];
@@ -242,7 +232,7 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
             let sb = alloc.extra.borrow_tracker_sb().borrow();
             // note: this range is relative to alloc (e.g. 0 -> start of alloc) so we need to offset it
             let mut intersected: Option<HashSet<u64>> = None;
-            for (range, stack) in sb.stacks.iter_all() {
+            for (_, stack) in sb.stacks.iter_all() {
                 let mut deallocatable_set = HashSet::<u64>::new();
                 for borrow in &stack.borrows {
                     if matches!(borrow.perm(), Permission::SharedReadWrite | Permission::Unique) {

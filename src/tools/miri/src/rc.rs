@@ -16,59 +16,7 @@ use serde::Serialize;
 use crate::rustc_middle::ty::layout::{LayoutOf, MaybeResult};
 use crate::{MemoryKind, Provenance, *};
 
-#[derive(Serialize, Debug, Clone)]
-struct VisualizerMessage {
-    severity: String,
-    message: String,
-}
-
-#[derive(Serialize, Debug, Clone, Default)]
-struct VisualizerProvenanceFrame {
-    description: String,
-    nodes: HashSet<u64>,
-}
-
-#[derive(Serialize, Debug, Clone)]
-struct VisualizerAlloc {
-    memory_kind: String,
-    backtrace: Option<String>,
-    bytes: Vec<u8>,
-}
-
-#[serde_with::serde_as]
-#[derive(Serialize, Debug, Default)]
-struct VisualizerData {
-    allocs: HashMap<u64, VisualizerAlloc>,
-    provenance_static_roots: HashSet<u64>,
-    /// AllocID containing wildcard provenance
-    provenance_wildcard: HashSet<u64>,
-    /// Exposed provenances
-    provenance_exposed: HashSet<u64>,
-    provenance_frames: Vec<VisualizerProvenanceFrame>,
-    /// Map from AllocID to [AllocID]
-    #[serde_as(as = "Vec<(_, _)>")]
-    provenance_graph: HashMap<u64, HashSet<u64>>,
-}
-
-static FILE_COUNTER: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-
 static GLOBAL_IGNORE_SET: Lazy<Mutex<HashSet<u64>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-
-fn alloc_map_to_entry<'tcx>(
-    alloc_id: &AllocId,
-    (memory_kind, alloc): &(MemoryKind, Allocation<Provenance, AllocExtra<'tcx>, MiriAllocBytes>),
-) -> Option<(u64, VisualizerAlloc)> {
-    let alloc_id: u64 = alloc_id.0.into();
-    Some((alloc_id, VisualizerAlloc {
-        memory_kind: format!("{:?}", memory_kind),
-        bytes: alloc
-            .get_bytes_unchecked((0..alloc.len()).into())
-            .iter()
-            .copied()
-            .collect::<Vec<u8>>(),
-        backtrace: alloc.extra.backtrace.as_ref().map(|b| format!("{:#?}", b)),
-    }))
-}
 
 fn is_memory_kind_leakable(kind: &str) -> bool {
     // TODO: confirm how to handle Machine(Runtime)
@@ -84,9 +32,6 @@ fn report_leak<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>, alloc_id: u64) {
     let alloc = ecx.memory.alloc_map().get(AllocId(alloc_id.try_into().unwrap()));
     println!("  allocated");
     if let Some((memory_kind, alloc)) = alloc {
-        let sb = alloc.extra.borrow_tracker_sb().borrow();
-        // println!("{:?}", sb);
-
         if let Some(backtrace) = &alloc.extra.backtrace {
             for frame in backtrace {
                 println!("    in {:?}", frame.span);
@@ -102,6 +47,48 @@ fn report_leak<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>, alloc_id: u64) {
         }
     }
     println!("");
+}
+
+fn provenance_to_concrete(
+    p: impl rustc_middle::mir::interpret::Provenance,
+) -> Option<crate::machine::Provenance> {
+    (&p as &dyn std::any::Any).downcast_ref::<crate::machine::Provenance>().cloned()
+}
+
+fn provenance_scalar_to_concrete(
+    s: rustc_middle::mir::interpret::Scalar<impl rustc_middle::mir::interpret::Provenance>,
+) -> Option<crate::machine::Provenance> {
+    match s {
+        interpret::Scalar::Int(_) => None,
+        interpret::Scalar::Ptr(p, _) => provenance_to_concrete(p.provenance),
+    }
+}
+
+fn local_to_provenances<'tcx>(
+    local: &LocalState<'tcx, impl rustc_middle::mir::interpret::Provenance>,
+) -> Option<Vec<crate::machine::Provenance>> {
+    match local.as_mplace_or_imm() {
+        Some(either::Either::Left((ptr, _mp))) =>
+            ptr.provenance.and_then(provenance_to_concrete).map(|p| vec![p]),
+        Some(either::Either::Right(imm)) =>
+            match imm {
+                Immediate::Scalar(scalar) =>
+                    match scalar {
+                        interpret::Scalar::Int(_) => None,
+                        interpret::Scalar::Ptr(p, _) =>
+                            provenance_to_concrete(p.provenance).map(|p| vec![p]),
+                    },
+                Immediate::ScalarPair(scalar1, scalar2) => {
+                    let prov_1 = provenance_scalar_to_concrete(scalar1);
+                    let prov_2 = provenance_scalar_to_concrete(scalar2);
+
+                    Some([prov_1, prov_2].into_iter().filter_map(|p| p).collect::<Vec<_>>())
+                        .filter(|v| !v.is_empty())
+                }
+                Immediate::Uninit => None,
+            },
+        None => None,
+    }
 }
 
 pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
@@ -123,57 +110,16 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
         match ptr.provenance {
             crate::Provenance::Concrete { tag, alloc_id } => {
                 provenance_root_tags.push(tag.get());
-                // // note: the following line seems to be not needed because `tag` should be able to dealloc the alloc
-                // leakable_alloc_ids.insert(alloc_id.0.into());
             }
             _ => {}
         }
     }
 
     let mut local_tags = vec![];
+
     for current_thread_frame in ecx.active_thread_stack() {
         for (_idx, local) in current_thread_frame.locals.iter_enumerated() {
-            let Some(provenances) = (match local.as_mplace_or_imm() {
-                Some(either::Either::Left((ptr, _mp))) =>
-                    ptr.provenance
-                        .as_ref()
-                        .and_then(|p| {
-                            (p as &dyn std::any::Any).downcast_ref::<crate::machine::Provenance>()
-                        })
-                        .map(|p| vec![p.clone()]),
-                Some(either::Either::Right(imm)) =>
-                    match imm {
-                        Immediate::Scalar(scalar) =>
-                            match scalar {
-                                interpret::Scalar::Int(_) => None,
-                                interpret::Scalar::Ptr(p, _) =>
-                                    (&(p.provenance) as &dyn std::any::Any)
-                                        .downcast_ref::<crate::machine::Provenance>()
-                                        .map(|p| vec![p.clone()]),
-                            },
-                        Immediate::ScalarPair(scalar1, scalar2) => {
-                            let prov_1 = match scalar1 {
-                                interpret::Scalar::Int(_) => None,
-                                interpret::Scalar::Ptr(p, _) =>
-                                    (&(p.provenance) as &dyn std::any::Any)
-                                        .downcast_ref::<crate::machine::Provenance>()
-                                        .cloned(),
-                            };
-                            let prov_2 = match scalar2 {
-                                interpret::Scalar::Int(_) => None,
-                                interpret::Scalar::Ptr(p, _) =>
-                                    (&(p.provenance) as &dyn std::any::Any)
-                                        .downcast_ref::<crate::machine::Provenance>()
-                                        .cloned(),
-                            };
-
-                            Some([prov_1, prov_2].into_iter().filter_map(|p| p).collect::<Vec<_>>())
-                                .filter(|v| !v.is_empty())
-                        }
-                        Immediate::Uninit => None,
-                    },
-                None => None,
-            }) else {
+            let Some(provenances) = local_to_provenances(local) else {
                 continue;
             };
 

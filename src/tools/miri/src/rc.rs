@@ -75,7 +75,7 @@ fn local_to_provenances<'tcx>(
     }
 }
 
-pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
+pub fn memory_leak_check_simplified<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
     let allocs: HashMap<u64, AllocInfo> = ecx
         .memory
         .alloc_map()

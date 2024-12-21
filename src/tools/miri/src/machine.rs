@@ -1510,7 +1510,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
     #[inline(always)]
     fn after_stack_push(ecx: &mut InterpCx<'tcx, Self>) -> InterpResult<'tcx> {
         // info!("after_stack_push(def = {def:?})", def = ecx.frame().instance().def);
-        crate::rc::rc_test(ecx);
+        crate::rc::memory_leak_check_simplified(ecx);
 
         if ecx.frame().extra.is_user_relevant {
             // We just pushed a local frame, so we know that the topmost local frame is the topmost
@@ -1526,7 +1526,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         frame: &Frame<'tcx, Self::Provenance, Self::FrameExtra>,
     ) -> InterpResult<'tcx> {
         // info!("before_stack_pop(def = {def:?})", def = frame.instance().def);
-        crate::rc::rc_test(ecx);
+        crate::rc::memory_leak_check_simplified(ecx);
 
         // We want this *before* the return value copy, because the return place itself is protected
         // until we do `end_call` here.
@@ -1550,7 +1550,7 @@ impl<'tcx> Machine<'tcx> for MiriMachine<'tcx> {
         //     "after_stack_pop(def = {def:?}, unwinding = {unwinding:?})",
         //     def = frame.instance().def,
         // );
-        crate::rc::rc_test(ecx);
+        crate::rc::memory_leak_check_simplified(ecx);
 
         if frame.extra.is_user_relevant {
             // All that we store is whether or not the frame we just removed is local, so now we

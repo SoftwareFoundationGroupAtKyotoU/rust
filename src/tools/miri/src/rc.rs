@@ -9,7 +9,6 @@ use crate::*;
 static GLOBAL_IGNORE_SET: Lazy<Mutex<HashSet<u64>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
 fn is_memory_kind_leakable(kind: &str) -> bool {
-    // TODO: confirm how to handle Machine(Runtime)
     return kind == "Machine(Machine)"
         || kind == "Machine(Global)"
         || kind == "Machine(ExternStatic)"
@@ -99,11 +98,8 @@ pub fn memory_leak_check_full<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
     }
 
     for (_, ptr) in &ecx.machine.threads.thread_local_allocs {
-        match ptr.provenance {
-            crate::Provenance::Concrete { tag, .. } => {
-                provenance_root_tags.push(tag.get());
-            }
-            _ => {}
+        if let crate::Provenance::Concrete { tag, .. } = ptr.provenance {
+            provenance_root_tags.push(tag.get());
         }
     }
 
@@ -185,7 +181,6 @@ pub fn memory_leak_check_full<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
         queue_tags.push_back(tag);
     }
 
-    // TODO: handle cases where only part of the pointer can be read
     loop {
         while let Some(tag) = queue_tags.pop_front() {
             if visited_tags.contains(&tag) {
@@ -258,7 +253,6 @@ pub fn memory_leak_check_full<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
             };
             if intersected.iter().all(|deallocatable_tag| !visited_tags.contains(deallocatable_tag))
             {
-                // println!("Alloc {alloc_id:?} has surely leaked");
                 let mut ignore_set = GLOBAL_IGNORE_SET.lock().unwrap();
                 if !ignore_set.contains(&(alloc_id.0.into())) {
                     report_leak(ecx, alloc_id.0.into());

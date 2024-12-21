@@ -83,7 +83,7 @@ fn local_to_provenances<'tcx>(
     }
 }
 
-pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
+pub fn memory_leak_check_full<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
     let mut provenance_root_tags: Vec<u64> = vec![];
     let mut leakable_alloc_ids = HashSet::<u64>::new();
 

@@ -18,14 +18,16 @@ fn is_memory_kind_leakable(kind: &str) -> bool {
 }
 
 fn report_leak<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>, alloc_id: u64) {
-    println!("Alloc {alloc_id} has leaked");
-    let alloc = ecx.memory.alloc_map().get(AllocId(alloc_id.try_into().unwrap()));
+    let Some((_memory_kind, alloc)) =
+        ecx.memory.alloc_map().get(AllocId(alloc_id.try_into().unwrap()))
+    else {
+        panic!("Failed to report leak for alloc {alloc_id}");
+    };
+    println!("Alloc {} (size: {:?}, align: {:?}) has leaked", alloc_id, alloc.size(), alloc.align);
     println!("  allocated");
-    if let Some((_, alloc)) = alloc {
-        if let Some(backtrace) = &alloc.extra.backtrace {
-            for frame in backtrace {
-                println!("    in {:?}", frame.span);
-            }
+    if let Some(backtrace) = &alloc.extra.backtrace {
+        for frame in backtrace {
+            println!("    in {:?}", frame.span);
         }
     }
     println!("  lost");
@@ -108,7 +110,7 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
     let mut local_tags = vec![];
 
     for (_, stack) in ecx.machine.threads.all_stacks() {
-        for frame in stack {
+        for (_frame_idx, frame) in stack.iter().enumerate() {
             for (_idx, local) in frame.locals.iter_enumerated() {
                 let Some(provenances) = local_to_provenances(local) else {
                     continue;

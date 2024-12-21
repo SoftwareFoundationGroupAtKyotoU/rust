@@ -107,15 +107,17 @@ pub fn rc_test<'tcx>(ecx: &InterpCx<'tcx, MiriMachine<'tcx>>) {
 
     let mut local_tags = vec![];
 
-    for current_thread_frame in ecx.active_thread_stack() {
-        for (_idx, local) in current_thread_frame.locals.iter_enumerated() {
-            let Some(provenances) = local_to_provenances(local) else {
-                continue;
-            };
+    for (_, stack) in ecx.machine.threads.all_stacks() {
+        for frame in stack {
+            for (_idx, local) in frame.locals.iter_enumerated() {
+                let Some(provenances) = local_to_provenances(local) else {
+                    continue;
+                };
 
-            for prov in &provenances {
-                if let crate::machine::Provenance::Concrete { tag, .. } = prov {
-                    local_tags.push(tag.clone());
+                for prov in &provenances {
+                    if let crate::machine::Provenance::Concrete { tag, .. } = prov {
+                        local_tags.push(tag.clone());
+                    }
                 }
             }
         }
